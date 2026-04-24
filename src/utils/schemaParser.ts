@@ -180,7 +180,7 @@ export const LAYOUT_PADDING = 32;
 export const LAYOUT_GAP_X = 72;
 export const LAYOUT_GAP_Y = 56;
 
-function getTableHeight(table: Table) {
+export function getTableHeight(table: Table) {
   return (
     TABLE_HEADER_HEIGHT + Math.max(1, table.columns.length) * TABLE_ROW_HEIGHT
   );

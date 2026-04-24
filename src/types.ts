@@ -27,3 +27,11 @@ export type Layout = {
   width: number;
   height: number;
 };
+
+export type Point = { x: number; y: number };
+
+export type RoutedEdge = {
+  id: string;
+  relation: Relation;
+  points: Point[];
+};

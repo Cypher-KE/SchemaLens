@@ -1,16 +1,18 @@
-import { useMemo, useRef, useState, useLayoutEffect } from "react";
+import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "react";
 import { AnimatePresence } from "framer-motion";
 import { toPng } from "html-to-image";
 import { jsPDF } from "jspdf";
-import { ParseResult } from "./types";
+import { ParseResult, Layout, RoutedEdge } from "./types";
 import {
   parseSchema,
-  buildLayout,
+  buildLayout, // fallback
   SAMPLE_SCHEMA,
   LAYOUT_PADDING,
   LAYOUT_GAP_X,
   LAYOUT_GAP_Y,
 } from "./utils/schemaParser";
+
+import { buildOptimalLayoutElk } from "./utils/elkLayout";
 
 import Sidebar from "./components/Sidebar";
 import RelationLayer from "./components/RelationLayer";
@@ -27,6 +29,11 @@ export default function App() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const [mainWidth, setMainWidth] = useState(1200);
+
+  // NEW: routed layout state
+  const [layout, setLayout] = useState<Record<string, Layout>>({});
+  const [routes, setRoutes] = useState<RoutedEdge[]>([]);
+  const [canvasSize, setCanvasSize] = useState({ width: 720, height: 500 });
 
   useLayoutEffect(() => {
     if (!mainRef.current) return;
@@ -99,39 +106,54 @@ export default function App() {
     [result.relations, filteredTableSet],
   );
 
-  const layout = useMemo(
-    () =>
-      buildLayout(filteredTables, {
-        availableWidth: mainWidth - 64,
-        relations: filteredRelations,
-      }),
-    [filteredTables, filteredRelations, mainWidth],
-  );
+  // NEW: compute “optimal” placement + routing (ELK)
+  useEffect(() => {
+    let cancelled = false;
 
-  const visibleRelations = useMemo(
-    () =>
-      filteredRelations.filter((r) => layout[r.fromTable] && layout[r.toTable]),
-    [filteredRelations, layout],
-  );
+    (async () => {
+      try {
+        const out = await buildOptimalLayoutElk(
+          filteredTables,
+          filteredRelations,
+        );
+        if (cancelled) return;
+        setLayout(out.layout);
+        setRoutes(out.edges);
+        setCanvasSize(out.size);
+      } catch (e) {
+        // fallback: keep something on screen if ELK fails
+        console.error("ELK layout failed; falling back to grid layout", e);
 
-  const canvasSize = useMemo(() => {
-    const values = Object.values(layout);
-    const maxX = values.length
-      ? Math.max(...values.map((b) => b.x + b.width))
-      : 0;
-    const maxY = values.length
-      ? Math.max(...values.map((b) => b.y + b.height))
-      : 0;
+        const fallbackLayout = buildLayout(filteredTables, {
+          availableWidth: mainWidth - 64,
+          relations: filteredRelations,
+        });
 
-    // extra padding so any “outer channel” routing never gets clipped
-    const EXTRA_X = Math.max(120, LAYOUT_GAP_X);
-    const EXTRA_Y = Math.max(120, LAYOUT_GAP_Y);
+        // old canvas bounds calculation
+        const values = Object.values(fallbackLayout);
+        const maxX = values.length
+          ? Math.max(...values.map((b) => b.x + b.width))
+          : 0;
+        const maxY = values.length
+          ? Math.max(...values.map((b) => b.y + b.height))
+          : 0;
+        const EXTRA_X = Math.max(120, LAYOUT_GAP_X);
+        const EXTRA_Y = Math.max(120, LAYOUT_GAP_Y);
 
-    return {
-      width: values.length ? maxX + LAYOUT_PADDING + EXTRA_X : 720,
-      height: values.length ? maxY + LAYOUT_PADDING + EXTRA_Y : 500,
+        if (cancelled) return;
+        setLayout(fallbackLayout);
+        setRoutes([]); // no routed edges on fallback
+        setCanvasSize({
+          width: values.length ? maxX + LAYOUT_PADDING + EXTRA_X : 720,
+          height: values.length ? maxY + LAYOUT_PADDING + EXTRA_Y : 500,
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
     };
-  }, [layout]);
+  }, [filteredTables, filteredRelations, mainWidth]);
 
   const parsedSummary = `${result.tables.length} tables • ${result.relations.length} relations`;
 
@@ -179,8 +201,9 @@ export default function App() {
               <RelationLayer
                 tables={filteredTables}
                 layout={layout}
-                relations={visibleRelations}
+                relations={filteredRelations}
                 activeTable={activeTable}
+                routes={routes}
               />
 
               <AnimatePresence>

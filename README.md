@@ -65,7 +65,7 @@ Import and export diagram files for seamless team collaboration.
 
 ## 🌐 Try It
 
-Live Demo: [Your Link Here]
+Live Demo: [(https://schema-lens-phi.vercel.app/)]
 
 ---
 

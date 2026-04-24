@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { toPng } from "html-to-image";
+import { jsPDF } from "jspdf";
 
 type Column = {
   name: string;
@@ -64,7 +66,8 @@ CREATE TABLE comments (
   created_at TIMESTAMP NOT NULL
 );`;
 
-const CONSTRAINT_KEYWORDS = /(NOT\s+NULL|NULL|PRIMARY\s+KEY|REFERENCES|UNIQUE|DEFAULT|CHECK|CONSTRAINT)/i;
+const CONSTRAINT_KEYWORDS =
+  /(NOT\s+NULL|NULL|PRIMARY\s+KEY|REFERENCES|UNIQUE|DEFAULT|CHECK|CONSTRAINT)/i;
 
 function splitDefinitions(body: string): string[] {
   const parts: string[] = [];
@@ -122,7 +125,8 @@ function parseColumnsList(input: string): string[] {
 function parseSchema(schemaText: string): ParseResult {
   const tables: Table[] = [];
   const relations: Relation[] = [];
-  const createTableRegex = /CREATE\s+TABLE\s+[`"\[]?(\w+)[`"\]]?\s*\(([\s\S]*?)\);/gi;
+  const createTableRegex =
+    /CREATE\s+TABLE\s+[`"\[]?(\w+)[`"\]]?\s*\(([\s\S]*?)\);/gi;
 
   for (const match of schemaText.matchAll(createTableRegex)) {
     const tableName = cleanIdentifier(match[1]);
@@ -136,13 +140,19 @@ function parseSchema(schemaText: string): ParseResult {
 
       const primaryMatch = normalized.match(/^PRIMARY\s+KEY\s*\(([^)]+)\)/i);
       if (primaryMatch) {
-        parseColumnsList(primaryMatch[1]).forEach((name) => primaryColumns.add(name));
+        parseColumnsList(primaryMatch[1]).forEach((name) =>
+          primaryColumns.add(name),
+        );
         continue;
       }
 
-      const tableFkMatch = normalized.match(
-        /^CONSTRAINT\s+\w+\s+FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+[`"\[]?(\w+)[`"\]]?\s*\(([^)]+)\)/i,
-      ) ?? normalized.match(/^FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+[`"\[]?(\w+)[`"\]]?\s*\(([^)]+)\)/i);
+      const tableFkMatch =
+        normalized.match(
+          /^CONSTRAINT\s+\w+\s+FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+[`"\[]?(\w+)[`"\]]?\s*\(([^)]+)\)/i,
+        ) ??
+        normalized.match(
+          /^FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+[`"\[]?(\w+)[`"\]]?\s*\(([^)]+)\)/i,
+        );
 
       if (tableFkMatch) {
         const fromColumn = parseColumnsList(tableFkMatch[1])[0];
@@ -169,7 +179,9 @@ function parseSchema(schemaText: string): ParseResult {
       const type = rest.split(CONSTRAINT_KEYWORDS)[0]?.trim() || "unknown";
       const isPrimaryKey = /PRIMARY\s+KEY/i.test(rest);
 
-      const inlineFkMatch = rest.match(/REFERENCES\s+[`"\[]?(\w+)[`"\]]?\s*\(([^)]+)\)/i);
+      const inlineFkMatch = rest.match(
+        /REFERENCES\s+[`"\[]?(\w+)[`"\]]?\s*\(([^)]+)\)/i,
+      );
       if (inlineFkMatch) {
         relations.push({
           fromTable: tableName,
@@ -240,12 +252,22 @@ function RelationLayer({
   relations: Relation[];
   activeTable: string | null;
 }) {
-  const tableMap = useMemo(() => new Map(tables.map((table) => [table.name, table])), [tables]);
+  const tableMap = useMemo(
+    () => new Map(tables.map((table) => [table.name, table])),
+    [tables],
+  );
 
   return (
     <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
       <defs>
-        <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+        <marker
+          id="arrow"
+          markerWidth="10"
+          markerHeight="8"
+          refX="9"
+          refY="4"
+          orient="auto"
+        >
           <path d="M0,0 L10,4 L0,8 Z" fill="#60a5fa" />
         </marker>
       </defs>
@@ -272,7 +294,9 @@ function RelationLayer({
 
         const path = `M ${startX} ${sourceY} C ${startX + (useRightSide ? controlOffset : -controlOffset)} ${sourceY}, ${endX + (useRightSide ? -controlOffset : controlOffset)} ${targetY}, ${endX} ${targetY}`;
         const isActive =
-          !activeTable || relation.fromTable === activeTable || relation.toTable === activeTable;
+          !activeTable ||
+          relation.fromTable === activeTable ||
+          relation.toTable === activeTable;
 
         return (
           <motion.path
@@ -297,14 +321,56 @@ export default function App() {
   const [schemaText, setSchemaText] = useState(SAMPLE_SCHEMA);
   const [search, setSearch] = useState("");
   const [activeTable, setActiveTable] = useState<string | null>(null);
-  const [result, setResult] = useState<ParseResult>(() => parseSchema(SAMPLE_SCHEMA));
+  const [result, setResult] = useState<ParseResult>(() =>
+    parseSchema(SAMPLE_SCHEMA),
+  );
+
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  const exportAsImage = async () => {
+    if (!canvasRef.current) return;
+    try {
+      const dataUrl = await toPng(canvasRef.current, {
+        cacheBust: true,
+        backgroundColor: "#020617",
+      });
+      const link = document.createElement("a");
+      link.download = "database-schema.png";
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      console.error("Failed to export image", err);
+    }
+  };
+
+  const exportAsPDF = async () => {
+    if (!canvasRef.current) return;
+    try {
+      const dataUrl = await toPng(canvasRef.current, {
+        cacheBust: true,
+        backgroundColor: "#020617",
+      });
+      const imgProps = new jsPDF().getImageProperties(dataUrl);
+      const pdf = new jsPDF("p", "mm", "a4");
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+
+      pdf.addImage(dataUrl, "PNG", 0, 0, pdfWidth, pdfHeight);
+      pdf.save("database-schema.pdf");
+    } catch (err) {
+      console.error("Failed to export PDF", err);
+    }
+  };
 
   const filteredTables = useMemo(() => {
     if (!search.trim()) {
       return result.tables;
     }
     const term = search.toLowerCase();
-    return result.tables.filter((table) => table.name.toLowerCase().includes(term));
+    return result.tables.filter((table) =>
+      table.name.toLowerCase().includes(term),
+    );
   }, [result.tables, search]);
 
   const layout = useMemo(() => buildLayout(filteredTables), [filteredTables]);
@@ -314,7 +380,9 @@ export default function App() {
     const width = values.length
       ? Math.max(...values.map((item) => item.x + item.width)) + 72
       : 720;
-    const height = values.length ? Math.max(...values.map((item) => item.y + item.height)) + 72 : 500;
+    const height = values.length
+      ? Math.max(...values.map((item) => item.y + item.height)) + 72
+      : 500;
     return { width, height };
   }, [layout]);
 
@@ -331,15 +399,23 @@ export default function App() {
             className="space-y-6"
           >
             <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-300">SchemaCanvas</p>
-              <h1 className="text-3xl font-semibold tracking-tight text-white">Visualize your database in seconds</h1>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-300">
+                SchemaCanvas
+              </p>
+              <h1 className="text-3xl font-semibold tracking-tight text-white">
+                Visualize your database in seconds
+              </h1>
               <p className="text-sm text-slate-300">
-                Paste SQL CREATE TABLE statements, then inspect table structures and foreign key links.
+                Paste SQL CREATE TABLE statements, then inspect table structures
+                and foreign key links.
               </p>
             </div>
 
             <div className="space-y-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
-              <label htmlFor="schemaInput" className="text-sm font-medium text-slate-200">
+              <label
+                htmlFor="schemaInput"
+                className="text-sm font-medium text-slate-200"
+              >
                 SQL Schema
               </label>
               <textarea
@@ -372,10 +448,27 @@ export default function App() {
                   Load Sample
                 </button>
               </div>
+
+              <div className="flex flex-wrap gap-2 pt-2 mt-2 border-t border-slate-700/50">
+                <button
+                  onClick={exportAsImage}
+                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-400 hover:bg-slate-800"
+                >
+                  Export PNG
+                </button>
+                <button
+                  onClick={exportAsPDF}
+                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-400 hover:bg-slate-800"
+                >
+                  Export PDF
+                </button>
+              </div>
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-medium text-slate-200">{parsedSummary}</p>
+              <p className="text-sm font-medium text-slate-200">
+                {parsedSummary}
+              </p>
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -396,14 +489,19 @@ export default function App() {
 
         <main className="relative flex-1 overflow-auto bg-[radial-gradient(circle_at_top_left,_#1e293b_0%,_#0f172a_45%,_#020617_100%)] p-5 lg:p-8">
           <div
+            ref={canvasRef}
             className="relative"
-            style={{ width: `${canvasSize.width}px`, minHeight: `${canvasSize.height}px` }}
+            style={{
+              width: `${canvasSize.width}px`,
+              minHeight: `${canvasSize.height}px`,
+            }}
           >
             <RelationLayer
               tables={filteredTables}
               layout={layout}
               relations={result.relations.filter(
-                (relation) => layout[relation.fromTable] && layout[relation.toTable],
+                (relation) =>
+                  layout[relation.fromTable] && layout[relation.toTable],
               )}
               activeTable={activeTable}
             />
@@ -424,18 +522,34 @@ export default function App() {
                     exit={{ opacity: 0, scale: 0.95 }}
                     transition={{ duration: 0.25, delay: index * 0.03 }}
                     className="absolute overflow-hidden rounded-xl border border-slate-700/80 bg-slate-900/90 shadow-xl shadow-black/40"
-                    style={{ left: box.x, top: box.y, width: box.width, minHeight: box.height }}
+                    style={{
+                      left: box.x,
+                      top: box.y,
+                      width: box.width,
+                      minHeight: box.height,
+                    }}
                   >
                     <button
-                      onClick={() => setActiveTable((current) => (current === table.name ? null : table.name))}
+                      onClick={() =>
+                        setActiveTable((current) =>
+                          current === table.name ? null : table.name,
+                        )
+                      }
                       className="flex w-full items-center justify-between border-b border-slate-700 bg-slate-800/90 px-4 py-3 text-left"
                     >
-                      <span className="font-semibold tracking-tight text-white">{table.name}</span>
-                      <span className="text-xs text-sky-300">{table.columns.length} cols</span>
+                      <span className="font-semibold tracking-tight text-white">
+                        {table.name}
+                      </span>
+                      <span className="text-xs text-sky-300">
+                        {table.columns.length} cols
+                      </span>
                     </button>
                     <ul className="divide-y divide-slate-800">
                       {table.columns.map((column) => (
-                        <li key={column.name} className="flex items-center justify-between px-4 py-2 text-sm">
+                        <li
+                          key={column.name}
+                          className="flex items-center justify-between px-4 py-2 text-sm"
+                        >
                           <span className="flex items-center gap-2 font-medium text-slate-100">
                             {column.isPrimaryKey && (
                               <span className="inline-flex rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-300">
@@ -444,7 +558,9 @@ export default function App() {
                             )}
                             {column.name}
                           </span>
-                          <span className="text-xs uppercase tracking-wide text-slate-400">{column.type}</span>
+                          <span className="text-xs uppercase tracking-wide text-slate-400">
+                            {column.type}
+                          </span>
                         </li>
                       ))}
                     </ul>

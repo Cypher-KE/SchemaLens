@@ -1,5 +1,5 @@
 import ELK from "elkjs/lib/elk.bundled.js";
-import type { Layout, Relation, RoutedEdge, Table } from "../types";
+import type { Layout, Relation, RoutedEdge, Table, Point } from "../types";
 import {
   getTableHeight,
   TABLE_HEADER_HEIGHT,
@@ -24,6 +24,77 @@ function getColumnCenterY(table: Table, columnName: string) {
   return TABLE_HEADER_HEIGHT + safe * TABLE_ROW_HEIGHT + TABLE_ROW_HEIGHT / 2;
 }
 
+function removeConsecutiveDuplicates(points: Point[]) {
+  const out: Point[] = [];
+  for (const p of points) {
+    const last = out[out.length - 1];
+    if (!last || last.x !== p.x || last.y !== p.y) out.push(p);
+  }
+  return out;
+}
+
+function simplifyOrthogonal(points: Point[]) {
+  let pts = removeConsecutiveDuplicates(points);
+  if (pts.length <= 2) return pts;
+
+  const out: Point[] = [pts[0]];
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = out[out.length - 1];
+    const b = pts[i];
+    const c = pts[i + 1];
+
+    const collinearX = a.x === b.x && b.x === c.x;
+    const collinearY = a.y === b.y && b.y === c.y;
+
+    if (collinearX || collinearY) continue;
+    out.push(b);
+  }
+  out.push(pts[pts.length - 1]);
+  return removeConsecutiveDuplicates(out);
+}
+
+function addEndpointFan(
+  points: Point[],
+  side: "EAST" | "WEST",
+  laneIndex: number,
+  laneCount: number,
+  which: "start" | "end",
+) {
+  if (points.length < 2) return points;
+  if (laneCount <= 1) return points;
+
+  const outward = side === "EAST" ? 1 : -1;
+  const lane = laneIndex - (laneCount - 1) / 2;
+
+  const BASE = 18;
+  const STEP = 10;
+  const fanDist = BASE + lane * STEP;
+
+  if (which === "end") {
+    const prev = points[points.length - 2];
+    const end = points[points.length - 1];
+    const fanX = end.x + outward * fanDist;
+
+    return simplifyOrthogonal([
+      ...points.slice(0, -1),
+      { x: fanX, y: prev.y },
+      { x: fanX, y: end.y },
+      end,
+    ]);
+  } else {
+    const start = points[0];
+    const next = points[1];
+    const fanX = start.x + outward * fanDist;
+
+    return simplifyOrthogonal([
+      start,
+      { x: fanX, y: start.y },
+      { x: fanX, y: next.y },
+      ...points.slice(1),
+    ]);
+  }
+}
+
 export async function buildOptimalLayoutElk(
   tables: Table[],
   relations: Relation[],
@@ -37,7 +108,6 @@ export async function buildOptimalLayoutElk(
 
   type Endpoint = {
     relIndex: number;
-    role: "PARENT_SRC" | "CHILD_TGT";
     tableName: string;
     columnName: string;
     side: "EAST" | "WEST";
@@ -58,7 +128,6 @@ export async function buildOptimalLayoutElk(
 
     const parentEp: Endpoint = {
       relIndex: i,
-      role: "PARENT_SRC",
       tableName: r.toTable,
       columnName: r.toColumn,
       side: "EAST",
@@ -68,7 +137,6 @@ export async function buildOptimalLayoutElk(
 
     const childEp: Endpoint = {
       relIndex: i,
-      role: "CHILD_TGT",
       tableName: r.fromTable,
       columnName: r.fromColumn,
       side: "WEST",
@@ -93,30 +161,33 @@ export async function buildOptimalLayoutElk(
     { x: number; y: number; side: "EAST" | "WEST" }
   >();
 
+  const portMeta = new Map<
+    string,
+    { laneIndex: number; laneCount: number; side: "EAST" | "WEST" }
+  >();
+
   for (const group of endpointsByKey.values()) {
     group.sort((a, b) => a.relIndex - b.relIndex);
 
-    const count = group.length;
-    const step = 5;
+    const laneCount = group.length;
+    const step = 11;
 
     for (let j = 0; j < group.length; j++) {
       const ep = group[j];
       const t = tableByName.get(ep.tableName);
       if (!t) continue;
 
-      const lane = j - (count - 1) / 2;
+      const lane = j - (laneCount - 1) / 2;
       const y = ep.baseY + lane * step;
 
-      const colIdx = Math.max(
-        0,
-        t.columns.findIndex((c) => c.name === ep.columnName),
-      );
-      const rowTop = TABLE_HEADER_HEIGHT + colIdx * TABLE_ROW_HEIGHT;
-      const rowBottom = rowTop + TABLE_ROW_HEIGHT;
-      const yClamped = clamp(y, rowTop + 6, rowBottom - 6);
+      const minY = TABLE_HEADER_HEIGHT + 10;
+      const maxY = getTableHeight(t) - 10;
+      const yClamped = clamp(y, minY, maxY);
 
       const x = ep.side === "EAST" ? TABLE_WIDTH : 0;
+
       portPositions.set(ep.portId, { x, y: yClamped, side: ep.side });
+      portMeta.set(ep.portId, { laneIndex: j, laneCount, side: ep.side });
     }
   }
 
@@ -173,12 +244,12 @@ export async function buildOptimalLayoutElk(
 
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
 
-      "elk.spacing.nodeNode": "18",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "44",
+      "elk.spacing.nodeNode": "30",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "74",
 
-      "elk.spacing.edgeEdge": "18",
-      "elk.spacing.edgeNode": "18",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": "18",
+      "elk.spacing.edgeEdge": "22",
+      "elk.spacing.edgeNode": "24",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "22",
 
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
@@ -192,6 +263,8 @@ export async function buildOptimalLayoutElk(
 
       "elk.layered.wrapping.strategy": "MULTI_EDGE",
       "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
+
+      "elk.layered.mergeEdges": "false",
     },
   };
 
@@ -216,11 +289,26 @@ export async function buildOptimalLayoutElk(
       const sec = e.sections?.[0];
       if (!sec?.startPoint || !sec?.endPoint) return null;
 
-      const pts = [sec.startPoint, ...(sec.bendPoints ?? []), sec.endPoint].map(
+      let pts = [sec.startPoint, ...(sec.bendPoints ?? []), sec.endPoint].map(
         (p: any) => ({ x: p.x, y: p.y }),
       );
 
       pts.reverse();
+
+      const startPortId = `port:child:${idx}`;
+      const endPortId = `port:parent:${idx}`;
+
+      const sm = portMeta.get(startPortId);
+      const em = portMeta.get(endPortId);
+
+      pts = simplifyOrthogonal(pts);
+
+      if (sm) {
+        pts = addEndpointFan(pts, sm.side, sm.laneIndex, sm.laneCount, "start");
+      }
+      if (em) {
+        pts = addEndpointFan(pts, em.side, em.laneIndex, em.laneCount, "end");
+      }
 
       return { id: e.id, relation, points: pts } satisfies RoutedEdge;
     })

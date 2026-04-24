@@ -23,13 +23,13 @@ export default function RelationLayer({
           viewBox={`0 0 ${ARROW_SIZE} ${ARROW_SIZE}`}
           markerWidth={ARROW_SIZE}
           markerHeight={ARROW_SIZE}
-          refX={ARROW_SIZE}
+          refX={ARROW_SIZE - 0.5}
           refY={ARROW_SIZE / 2}
           orient="auto"
           markerUnits="userSpaceOnUse"
         >
           <path
-            d={`M0,0 L${ARROW_SIZE},${ARROW_SIZE / 2} L0,${ARROW_SIZE} Z`}
+            d={`M-1,0 L${ARROW_SIZE},${ARROW_SIZE / 2} L-1,${ARROW_SIZE} Z`}
             fill="context-stroke"
           />
         </marker>

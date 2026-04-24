@@ -54,16 +54,12 @@ function splitDefinitions(body: string): string[] {
       continue;
     }
     if (!quote) {
-      if (char === "(") {
-        depth += 1;
-      } else if (char === ")") {
-        depth = Math.max(0, depth - 1);
-      }
+      if (char === "(") depth += 1;
+      else if (char === ")") depth = Math.max(0, depth - 1);
+
       if (char === "," && depth === 0) {
         const trimmed = current.trim();
-        if (trimmed) {
-          parts.push(trimmed);
-        }
+        if (trimmed) parts.push(trimmed);
         current = "";
         continue;
       }
@@ -72,9 +68,7 @@ function splitDefinitions(body: string): string[] {
   }
 
   const trailing = current.trim();
-  if (trailing) {
-    parts.push(trailing);
-  }
+  if (trailing) parts.push(trailing);
   return parts;
 }
 
@@ -99,7 +93,12 @@ export function parseSchema(schemaText: string): ParseResult {
     const tableName = cleanIdentifier(match[1]);
     const body = match[2];
     const definitions = splitDefinitions(body);
-    const columns: [] = [];
+
+    const columns: Array<{
+      name: string;
+      type: string;
+      isPrimaryKey: boolean;
+    }> = [];
     const primaryColumns = new Set<string>();
 
     for (const definition of definitions) {
@@ -137,9 +136,7 @@ export function parseSchema(schemaText: string): ParseResult {
       }
 
       const columnMatch = normalized.match(/^[`"\[]?(\w+)[`"\]]?\s+(.+)$/);
-      if (!columnMatch) {
-        continue;
-      }
+      if (!columnMatch) continue;
 
       const columnName = cleanIdentifier(columnMatch[1]);
       const rest = columnMatch[2];
@@ -158,16 +155,12 @@ export function parseSchema(schemaText: string): ParseResult {
         });
       }
 
-      columns.push({
-        name: columnName,
-        type,
-        isPrimaryKey,
-      } as never);
+      columns.push({ name: columnName, type, isPrimaryKey });
     }
 
     tables.push({
       name: tableName,
-      columns: columns.map((column: any) => ({
+      columns: columns.map((column) => ({
         ...column,
         isPrimaryKey: column.isPrimaryKey || primaryColumns.has(column.name),
       })),
@@ -177,25 +170,146 @@ export function parseSchema(schemaText: string): ParseResult {
   return { tables, relations };
 }
 
-export function buildLayout(tables: Table[]): Record<string, Layout> {
-  const width = 290;
-  const headerHeight = 44;
-  const rowHeight = 30;
-  const horizontalGap = 56;
-  const verticalGap = 46;
-  const colCount = Math.max(1, Math.ceil(Math.sqrt(tables.length)));
-  const layout: Record<string, Layout> = {};
+/* ------------------ sizing constants ------------------ */
 
-  tables.forEach((table, index) => {
+export const TABLE_WIDTH = 290;
+export const TABLE_HEADER_HEIGHT = 44;
+export const TABLE_ROW_HEIGHT = 30;
+
+export const LAYOUT_PADDING = 32;
+export const LAYOUT_GAP_X = 72;
+export const LAYOUT_GAP_Y = 56;
+
+function getTableHeight(table: Table) {
+  return (
+    TABLE_HEADER_HEIGHT + Math.max(1, table.columns.length) * TABLE_ROW_HEIGHT
+  );
+}
+
+function orderTablesForLayout(tables: Table[], relations?: Relation[]) {
+  if (!relations?.length) return tables;
+
+  const names = new Set(tables.map((t) => t.name));
+  const children = new Map<string, Set<string>>();
+  const indeg = new Map<string, number>();
+
+  for (const t of tables) {
+    children.set(t.name, new Set());
+    indeg.set(t.name, 0);
+  }
+
+  // referenced (toTable) -> referencing (fromTable)
+  for (const r of relations) {
+    if (!names.has(r.fromTable) || !names.has(r.toTable)) continue;
+    if (r.fromTable === r.toTable) continue;
+
+    const set = children.get(r.toTable)!;
+    if (!set.has(r.fromTable)) {
+      set.add(r.fromTable);
+      indeg.set(r.fromTable, (indeg.get(r.fromTable) ?? 0) + 1);
+    }
+  }
+
+  // topo-ish order (cycles handled)
+  const q: string[] = [];
+  for (const t of tables) if ((indeg.get(t.name) ?? 0) === 0) q.push(t.name);
+
+  const topo: string[] = [];
+  const indegWork = new Map(indeg);
+
+  while (q.length) {
+    const n = q.shift()!;
+    topo.push(n);
+    for (const c of children.get(n) ?? []) {
+      indegWork.set(c, (indegWork.get(c) ?? 0) - 1);
+      if ((indegWork.get(c) ?? 0) === 0) q.push(c);
+    }
+  }
+
+  for (const t of tables) if (!topo.includes(t.name)) topo.push(t.name);
+
+  // depth (layer) used only for sorting, not for forcing vertical stacking
+  const depth = new Map<string, number>();
+  for (const n of topo) depth.set(n, 0);
+  for (const n of topo) {
+    const d = depth.get(n) ?? 0;
+    for (const c of children.get(n) ?? []) {
+      depth.set(c, Math.max(depth.get(c) ?? 0, d + 1));
+    }
+  }
+
+  const degree = new Map<string, number>();
+  for (const t of tables) {
+    degree.set(
+      t.name,
+      (children.get(t.name)?.size ?? 0) + (indeg.get(t.name) ?? 0),
+    );
+  }
+
+  const tableByName = new Map(tables.map((t) => [t.name, t]));
+  return topo
+    .slice()
+    .sort((a, b) => {
+      const da = depth.get(a) ?? 0;
+      const db = depth.get(b) ?? 0;
+      if (da !== db) return da - db;
+      const ga = degree.get(a) ?? 0;
+      const gb = degree.get(b) ?? 0;
+      if (ga !== gb) return gb - ga;
+      return a.localeCompare(b);
+    })
+    .map((name) => tableByName.get(name)!)
+    .filter(Boolean);
+}
+
+/**
+ * Responsive grid layout + smarter ordering (does NOT collapse into one column).
+ */
+export function buildLayout(
+  tables: Table[],
+  options?: { availableWidth?: number; relations?: Relation[] },
+): Record<string, Layout> {
+  const availableWidth = Math.max(420, options?.availableWidth ?? 1200);
+
+  const ordered = orderTablesForLayout(tables, options?.relations);
+
+  const colCount = Math.max(
+    1,
+    Math.min(
+      ordered.length,
+      Math.floor(
+        (availableWidth - LAYOUT_PADDING * 2 + LAYOUT_GAP_X) /
+          (TABLE_WIDTH + LAYOUT_GAP_X),
+      ),
+    ),
+  );
+
+  const heights = ordered.map(getTableHeight);
+  const rowCount = Math.max(1, Math.ceil(ordered.length / colCount));
+
+  const rowHeights = Array.from({ length: rowCount }, () => 0);
+  for (let i = 0; i < ordered.length; i++) {
+    const row = Math.floor(i / colCount);
+    rowHeights[row] = Math.max(rowHeights[row], heights[i]);
+  }
+
+  const rowOffsets: number[] = [];
+  let y = LAYOUT_PADDING;
+  for (let r = 0; r < rowCount; r++) {
+    rowOffsets[r] = y;
+    y += rowHeights[r] + LAYOUT_GAP_Y;
+  }
+
+  const layout: Record<string, Layout> = {};
+  ordered.forEach((table, index) => {
     const col = index % colCount;
     const row = Math.floor(index / colCount);
-    const height = headerHeight + Math.max(1, table.columns.length) * rowHeight;
 
     layout[table.name] = {
-      x: col * (width + horizontalGap) + 32,
-      y: row * (250 + verticalGap) + 32,
-      width,
-      height,
+      x: LAYOUT_PADDING + col * (TABLE_WIDTH + LAYOUT_GAP_X),
+      y: rowOffsets[row],
+      width: TABLE_WIDTH,
+      height: heights[index],
     };
   });
 
@@ -207,7 +321,13 @@ export function getColumnY(
   layout: Layout,
   columnName: string,
 ): number {
-  const index = table.columns.findIndex((column) => column.name === columnName);
+  const index = table.columns.findIndex((c) => c.name === columnName);
   const safeIndex = index >= 0 ? index : 0;
-  return layout.y + 44 + safeIndex * 30 + 15;
+
+  return (
+    layout.y +
+    TABLE_HEADER_HEIGHT +
+    safeIndex * TABLE_ROW_HEIGHT +
+    TABLE_ROW_HEIGHT / 2
+  );
 }

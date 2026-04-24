@@ -1,1 +1,71 @@
 @import "tailwindcss";
+
+@layer base {
+  :root {
+    /* core */
+    --bg: 0 0% 100%;
+    --fg: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96%;
+    --muted-fg: 215.4 16.3% 46.9%;
+    --card: 0 0% 100%;
+    --card-fg: 222.2 47.4% 11.2%;
+    --border: 214.3 31.8% 91.4%;
+
+    /* accent + misc */
+    --accent: 199 89% 48%;
+    --accent-2: 213 94% 68%;
+    --warning: 38 92% 50%;
+
+    /* canvas */
+    --canvas-1: 210 40% 98%;
+    --canvas-2: 210 40% 96%;
+    --canvas-3: 210 30% 92%;
+
+    /* used for PNG/PDF exports (solid) */
+    --export-bg: 210 40% 98%;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: 222.2 84% 4.9%;
+      --fg: 210 40% 98%;
+      --muted: 222.2 47% 11%;
+      --muted-fg: 215 20.2% 65.1%;
+      --card: 222.2 47% 9%;
+      --card-fg: 210 40% 98%;
+      --border: 215.3 19.3% 23%;
+
+      --accent: 199 89% 55%;
+      --accent-2: 213 94% 68%;
+      --warning: 38 92% 55%;
+
+      --canvas-1: 215 35% 16%;
+      --canvas-2: 222.2 47% 11%;
+      --canvas-3: 222.2 84% 4.9%;
+
+      --export-bg: 222.2 84% 4.9%;
+    }
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: hsl(var(--bg));
+    color: hsl(var(--fg));
+  }
+}
+
+@layer utilities {
+  .canvas-bg {
+    background: radial-gradient(
+      circle at top left,
+      hsl(var(--canvas-1)) 0%,
+      hsl(var(--canvas-2)) 45%,
+      hsl(var(--canvas-3)) 100%
+    );
+  }
+}

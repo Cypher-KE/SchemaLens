@@ -28,7 +28,7 @@ export default function Sidebar({
   onExportPDF,
 }: SidebarProps) {
   return (
-    <aside className="w-full shrink-0 border-b border-slate-800 bg-slate-900/70 p-6 backdrop-blur lg:w-[380px] lg:border-b-0 lg:border-r">
+    <aside className="w-full shrink-0 border-b border-slate-800 bg-slate-900/70 p-6 backdrop-blur lg:w-[480px] lg:border-b-0 lg:border-r">
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}

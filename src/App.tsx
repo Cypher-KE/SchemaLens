@@ -2,16 +2,15 @@ import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "react";
 import { AnimatePresence } from "framer-motion";
 import { toPng } from "html-to-image";
 import { jsPDF } from "jspdf";
-import { ParseResult, Layout, RoutedEdge } from "./types";
+import type { Layout, ParseResult, RoutedEdge } from "./types";
 import {
   parseSchema,
-  buildLayout, // fallback
+  buildLayout,
   SAMPLE_SCHEMA,
   LAYOUT_PADDING,
   LAYOUT_GAP_X,
   LAYOUT_GAP_Y,
 } from "./utils/schemaParser";
-
 import { buildOptimalLayoutElk } from "./utils/elkLayout";
 
 import Sidebar from "./components/Sidebar";
@@ -30,7 +29,6 @@ export default function App() {
   const mainRef = useRef<HTMLElement>(null);
   const [mainWidth, setMainWidth] = useState(1200);
 
-  // NEW: routed layout state
   const [layout, setLayout] = useState<Record<string, Layout>>({});
   const [routes, setRoutes] = useState<RoutedEdge[]>([]);
   const [canvasSize, setCanvasSize] = useState({ width: 720, height: 500 });
@@ -106,7 +104,6 @@ export default function App() {
     [result.relations, filteredTableSet],
   );
 
-  // NEW: compute “optimal” placement + routing (ELK)
   useEffect(() => {
     let cancelled = false;
 
@@ -115,13 +112,15 @@ export default function App() {
         const out = await buildOptimalLayoutElk(
           filteredTables,
           filteredRelations,
+          {
+            availableWidth: mainWidth - 64,
+          },
         );
         if (cancelled) return;
         setLayout(out.layout);
         setRoutes(out.edges);
         setCanvasSize(out.size);
       } catch (e) {
-        // fallback: keep something on screen if ELK fails
         console.error("ELK layout failed; falling back to grid layout", e);
 
         const fallbackLayout = buildLayout(filteredTables, {
@@ -129,7 +128,6 @@ export default function App() {
           relations: filteredRelations,
         });
 
-        // old canvas bounds calculation
         const values = Object.values(fallbackLayout);
         const maxX = values.length
           ? Math.max(...values.map((b) => b.x + b.width))
@@ -137,12 +135,13 @@ export default function App() {
         const maxY = values.length
           ? Math.max(...values.map((b) => b.y + b.height))
           : 0;
+
         const EXTRA_X = Math.max(120, LAYOUT_GAP_X);
         const EXTRA_Y = Math.max(120, LAYOUT_GAP_Y);
 
         if (cancelled) return;
         setLayout(fallbackLayout);
-        setRoutes([]); // no routed edges on fallback
+        setRoutes([]);
         setCanvasSize({
           width: values.length ? maxX + LAYOUT_PADDING + EXTRA_X : 720,
           height: values.length ? maxY + LAYOUT_PADDING + EXTRA_Y : 500,

@@ -24,23 +24,20 @@ function getColumnCenterY(table: Table, columnName: string) {
   return TABLE_HEADER_HEIGHT + safe * TABLE_ROW_HEIGHT + TABLE_ROW_HEIGHT / 2;
 }
 
-/**
- * ELK layered layout + ORTHOGONAL routing.
- * We layout edges from referenced(table) -> referencing(table) for cleaner layers,
- * but we return the polyline reversed so your arrow still points FK -> PK (child -> parent).
- */
 export async function buildOptimalLayoutElk(
   tables: Table[],
   relations: Relation[],
+  options?: { availableWidth?: number },
 ): Promise<BuildElkResult> {
   const elk = new ELK();
-
   const tableByName = new Map(tables.map((t) => [t.name, t]));
 
-  // --- Build per-endpoint port definitions with small offsets to prevent same-row overlap ---
+  const availableWidth = Math.max(520, options?.availableWidth ?? 1200);
+  const targetWrapWidth = Math.max(520, availableWidth - LAYOUT_PADDING * 2);
+
   type Endpoint = {
     relIndex: number;
-    role: "PARENT_SRC" | "CHILD_TGT"; // direction inside ELK
+    role: "PARENT_SRC" | "CHILD_TGT";
     tableName: string;
     columnName: string;
     side: "EAST" | "WEST";
@@ -56,7 +53,6 @@ export async function buildOptimalLayoutElk(
     const parent = tableByName.get(r.toTable);
     if (!child || !parent) return;
 
-    // ELK edge direction: parent -> child (left-to-right layered graph)
     const parentBaseY = getColumnCenterY(parent, r.toColumn);
     const childBaseY = getColumnCenterY(child, r.fromColumn);
 
@@ -92,7 +88,6 @@ export async function buildOptimalLayoutElk(
     endpoints.push(parentEp, childEp);
   });
 
-  // Compute port Y offsets within the row height so multiple edges from same column don’t sit on top of each other.
   const portPositions = new Map<
     string,
     { x: number; y: number; side: "EAST" | "WEST" }
@@ -102,18 +97,16 @@ export async function buildOptimalLayoutElk(
     group.sort((a, b) => a.relIndex - b.relIndex);
 
     const count = group.length;
-    const step = 5; // px separation between ports in same column
+    const step = 5;
 
     for (let j = 0; j < group.length; j++) {
       const ep = group[j];
       const t = tableByName.get(ep.tableName);
       if (!t) continue;
 
-      // center around baseY
       const lane = j - (count - 1) / 2;
       const y = ep.baseY + lane * step;
 
-      // keep within the row bounds a bit
       const colIdx = Math.max(
         0,
         t.columns.findIndex((c) => c.name === ep.columnName),
@@ -123,12 +116,10 @@ export async function buildOptimalLayoutElk(
       const yClamped = clamp(y, rowTop + 6, rowBottom - 6);
 
       const x = ep.side === "EAST" ? TABLE_WIDTH : 0;
-
       portPositions.set(ep.portId, { x, y: yClamped, side: ep.side });
     }
   }
 
-  // --- Build ELK nodes (tables) with ports ---
   const elkNodes = tables.map((t) => {
     const ports = endpoints
       .filter((ep) => ep.tableName === t.name)
@@ -140,9 +131,7 @@ export async function buildOptimalLayoutElk(
           height: 1,
           x: pos.x,
           y: pos.y,
-          layoutOptions: {
-            "elk.port.side": pos.side,
-          },
+          layoutOptions: { "elk.port.side": pos.side },
         };
       });
 
@@ -151,29 +140,27 @@ export async function buildOptimalLayoutElk(
       width: TABLE_WIDTH,
       height: getTableHeight(t),
       ports,
-      layoutOptions: {
-        // respect our port x/y exactly
-        "elk.portConstraints": "FIXED_POS",
-      },
+      layoutOptions: { "elk.portConstraints": "FIXED_POS" },
     };
   });
 
-  // --- Build ELK edges (parent -> child) ---
   const elkEdges = relations
     .map((r, i) => {
       const child = tableByName.get(r.fromTable);
       const parent = tableByName.get(r.toTable);
       if (!child || !parent) return null;
 
-      const id = `edge:${i}`;
-
       return {
-        id,
+        id: `edge:${i}`,
         sources: [`port:parent:${i}`],
         targets: [`port:child:${i}`],
       };
     })
-    .filter(Boolean);
+    .filter(Boolean) as Array<{
+    id: string;
+    sources: string[];
+    targets: string[];
+  }>;
 
   const graph: any = {
     id: "root",
@@ -182,28 +169,34 @@ export async function buildOptimalLayoutElk(
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": "RIGHT",
-
-      // orthogonal edges like ERD tools
       "elk.edgeRouting": "ORTHOGONAL",
 
-      // More aggressive (tighter) placement but still readable:
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
-      "elk.spacing.nodeNode": "28",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "56",
 
-      // Make edges easier to follow (separate them):
-      "elk.spacing.edgeEdge": "16",
+      "elk.spacing.nodeNode": "18",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "44",
+
+      "elk.spacing.edgeEdge": "18",
       "elk.spacing.edgeNode": "18",
       "elk.layered.spacing.edgeEdgeBetweenLayers": "18",
 
-      // Better crossing minimization
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+      "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
+      "elk.layered.cycleBreaking.strategy": "GREEDY",
+
+      "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
+      "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+      "elk.layered.nodePlacement.favorStraightEdges": "true",
+
+      "elk.layered.compaction.postCompaction.strategy": "EDGE_LENGTH",
+
+      "elk.layered.wrapping.strategy": "MULTI_EDGE",
+      "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
     },
   };
 
   const out = await elk.layout(graph);
 
-  // --- Node layout map ---
   const layout: Record<string, Layout> = {};
   for (const n of out.children ?? []) {
     layout[n.id] = {
@@ -214,7 +207,6 @@ export async function buildOptimalLayoutElk(
     };
   }
 
-  // --- Routed edges as polylines ---
   const routed: RoutedEdge[] = (out.edges ?? [])
     .map((e: any) => {
       const idx = Number(String(e.id).split(":")[1]);
@@ -228,20 +220,47 @@ export async function buildOptimalLayoutElk(
         (p: any) => ({ x: p.x, y: p.y }),
       );
 
-      // ELK is parent->child; reverse so it visually points FK(fromTable)->PK(toTable) if you keep markerEnd.
       pts.reverse();
 
-      return {
-        id: e.id,
-        relation,
-        points: pts,
-      } satisfies RoutedEdge;
+      return { id: e.id, relation, points: pts } satisfies RoutedEdge;
     })
     .filter(Boolean);
 
-  // --- Canvas size: include edge points so nothing clips ---
+  let minX = Infinity;
+  let minY = Infinity;
+
+  for (const b of Object.values(layout)) {
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+  }
+  for (const ed of routed) {
+    for (const p of ed.points) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+    }
+  }
+
+  if (!Number.isFinite(minX)) minX = 0;
+  if (!Number.isFinite(minY)) minY = 0;
+
+  const shiftX = LAYOUT_PADDING - minX;
+  const shiftY = LAYOUT_PADDING - minY;
+
+  for (const k of Object.keys(layout)) {
+    layout[k] = {
+      ...layout[k],
+      x: layout[k].x + shiftX,
+      y: layout[k].y + shiftY,
+    };
+  }
+
+  for (const ed of routed) {
+    ed.points = ed.points.map((p) => ({ x: p.x + shiftX, y: p.y + shiftY }));
+  }
+
   let maxX = 0;
   let maxY = 0;
+
   for (const b of Object.values(layout)) {
     maxX = Math.max(maxX, b.x + b.width);
     maxY = Math.max(maxY, b.y + b.height);

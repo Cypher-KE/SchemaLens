@@ -12,7 +12,6 @@ type RelationLayerProps = {
 const ARROW_SIZE = 7;
 
 export default function RelationLayer({
-  relations,
   activeTable,
   routes,
 }: RelationLayerProps) {

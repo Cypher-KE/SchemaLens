@@ -170,8 +170,6 @@ export function parseSchema(schemaText: string): ParseResult {
   return { tables, relations };
 }
 
-/* ------------------ sizing constants ------------------ */
-
 export const TABLE_WIDTH = 290;
 export const TABLE_HEADER_HEIGHT = 44;
 export const TABLE_ROW_HEIGHT = 30;
@@ -198,7 +196,6 @@ function orderTablesForLayout(tables: Table[], relations?: Relation[]) {
     indeg.set(t.name, 0);
   }
 
-  // referenced (toTable) -> referencing (fromTable)
   for (const r of relations) {
     if (!names.has(r.fromTable) || !names.has(r.toTable)) continue;
     if (r.fromTable === r.toTable) continue;
@@ -210,7 +207,6 @@ function orderTablesForLayout(tables: Table[], relations?: Relation[]) {
     }
   }
 
-  // topo-ish order (cycles handled)
   const q: string[] = [];
   for (const t of tables) if ((indeg.get(t.name) ?? 0) === 0) q.push(t.name);
 
@@ -228,7 +224,6 @@ function orderTablesForLayout(tables: Table[], relations?: Relation[]) {
 
   for (const t of tables) if (!topo.includes(t.name)) topo.push(t.name);
 
-  // depth (layer) used only for sorting, not for forcing vertical stacking
   const depth = new Map<string, number>();
   for (const n of topo) depth.set(n, 0);
   for (const n of topo) {
@@ -262,9 +257,6 @@ function orderTablesForLayout(tables: Table[], relations?: Relation[]) {
     .filter(Boolean);
 }
 
-/**
- * Responsive grid layout + smarter ordering (does NOT collapse into one column).
- */
 export function buildLayout(
   tables: Table[],
   options?: { availableWidth?: number; relations?: Relation[] },

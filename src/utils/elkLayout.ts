@@ -68,77 +68,13 @@ function sideNormal(s: Side): Point {
 }
 
 /**
- * Fan edges outward near the endpoint so they don't stack/collide right at the table border.
- * Only applied when multiple edges share the same side of the same table.
+ * Extend the outward lead (first/last segment) WITHOUT inserting new bend points.
+ * This reduces "unnecessary" little jogs caused by post-processing.
+ *
+ * Works by shifting the first trunk (start) or last trunk (end) coordinate
+ * along the normal axis when the route has the expected orthogonal pattern.
  */
-function addEndpointFan(
-  points: Point[],
-  side: Side,
-  laneIndex: number,
-  laneCount: number,
-  which: "start" | "end",
-) {
-  if (points.length < 2) return points;
-  if (laneCount <= 1) return points;
-
-  const lane = laneIndex - (laneCount - 1) / 2;
-
-  const BASE = 26;
-  const STEP = 14;
-  const dist = clamp(BASE + lane * STEP, 18, 78);
-
-  const norm = sideNormal(side);
-
-  if (which === "start") {
-    const start = points[0];
-    const next = points[1];
-
-    if (norm.x !== 0) {
-      const fx = start.x + norm.x * dist;
-      return simplifyOrthogonal([
-        start,
-        { x: fx, y: start.y },
-        { x: fx, y: next.y },
-        ...points.slice(1),
-      ]);
-    } else {
-      const fy = start.y + norm.y * dist;
-      return simplifyOrthogonal([
-        start,
-        { x: start.x, y: fy },
-        { x: next.x, y: fy },
-        ...points.slice(1),
-      ]);
-    }
-  } else {
-    const prev = points[points.length - 2];
-    const end = points[points.length - 1];
-
-    if (norm.x !== 0) {
-      const fx = end.x + norm.x * dist;
-      return simplifyOrthogonal([
-        ...points.slice(0, -1),
-        { x: fx, y: prev.y },
-        { x: fx, y: end.y },
-        end,
-      ]);
-    } else {
-      const fy = end.y + norm.y * dist;
-      return simplifyOrthogonal([
-        ...points.slice(0, -1),
-        { x: prev.x, y: fy },
-        { x: end.x, y: fy },
-        end,
-      ]);
-    }
-  }
-}
-
-/**
- * If ELK produces tiny first/last segments ("stubby" leads), add a clean outward stub
- * without creating backtracking.
- */
-function ensureMinLead(
+function extendLeadWithoutExtraBends(
   points: Point[],
   side: Side,
   which: "start" | "end",
@@ -146,115 +82,117 @@ function ensureMinLead(
 ) {
   if (points.length < 2) return points;
 
-  const norm = sideNormal(side);
+  const n = sideNormal(side);
+  const out = points.map((p) => ({ ...p }));
 
   if (which === "start") {
-    const a = points[0];
-    const b = points[1];
+    const a = out[0];
+    const b = out[1];
 
-    // horizontal outward lead
-    if (
-      norm.x !== 0 &&
-      a.y === b.y &&
-      Math.sign(b.x - a.x) === Math.sign(norm.x)
-    ) {
+    // EAST/WEST: expect first segment horizontal outward
+    if (n.x !== 0) {
+      if (a.y !== b.y) return points;
+      if (Math.sign(b.x - a.x) !== Math.sign(n.x)) return points;
+
       const len = Math.abs(b.x - a.x);
       if (len >= minLead) return points;
 
-      const stubX = a.x + norm.x * minLead;
+      const oldX = b.x;
+      const newX = a.x + n.x * minLead;
 
-      // If we have a bend point (a->b->c), use c's coordinate to rejoin orthogonally.
-      if (points.length >= 3) {
-        const c = points[2];
-        return simplifyOrthogonal([
-          a,
-          { x: stubX, y: a.y },
-          { x: stubX, y: c.y },
-          ...points.slice(2),
-        ]);
+      out[1].x = newX;
+
+      // Shift the immediate trunk that shares the old X (typically vertical segment start)
+      for (let i = 2; i < out.length; i++) {
+        if (out[i].x !== oldX) break;
+        out[i].x = newX;
       }
 
-      return simplifyOrthogonal([a, { x: stubX, y: a.y }, b]);
+      return simplifyOrthogonal(out);
     }
 
-    // vertical outward lead
-    if (
-      norm.y !== 0 &&
-      a.x === b.x &&
-      Math.sign(b.y - a.y) === Math.sign(norm.y)
-    ) {
+    // NORTH/SOUTH: expect first segment vertical outward
+    if (n.y !== 0) {
+      if (a.x !== b.x) return points;
+      if (Math.sign(b.y - a.y) !== Math.sign(n.y)) return points;
+
       const len = Math.abs(b.y - a.y);
       if (len >= minLead) return points;
 
-      const stubY = a.y + norm.y * minLead;
+      const oldY = b.y;
+      const newY = a.y + n.y * minLead;
 
-      if (points.length >= 3) {
-        const c = points[2];
-        return simplifyOrthogonal([
-          a,
-          { x: a.x, y: stubY },
-          { x: c.x, y: stubY },
-          ...points.slice(2),
-        ]);
+      out[1].y = newY;
+
+      for (let i = 2; i < out.length; i++) {
+        if (out[i].y !== oldY) break;
+        out[i].y = newY;
       }
 
-      return simplifyOrthogonal([a, { x: a.x, y: stubY }, b]);
+      return simplifyOrthogonal(out);
     }
 
     return points;
   } else {
-    const a = points[points.length - 2];
-    const b = points[points.length - 1];
+    const a = out[out.length - 2];
+    const b = out[out.length - 1];
 
-    // last segment approaches the port from the outward direction (so b->a is along normal)
-    if (
-      norm.x !== 0 &&
-      a.y === b.y &&
-      Math.sign(a.x - b.x) === Math.sign(norm.x)
-    ) {
-      const len = Math.abs(a.x - b.x);
+    // EAST/WEST: expect last segment horizontal INTO the port (opposite of normal)
+    if (n.x !== 0) {
+      if (a.y !== b.y) return points;
+      if (Math.sign(b.x - a.x) !== -Math.sign(n.x)) return points;
+
+      const len = Math.abs(b.x - a.x);
       if (len >= minLead) return points;
 
-      const stubX = b.x + norm.x * minLead;
+      const oldX = a.x;
+      const newX = b.x + n.x * minLead;
 
-      if (points.length >= 3) {
-        const prev = points[points.length - 3];
-        return simplifyOrthogonal([
-          ...points.slice(0, -2),
-          { x: stubX, y: prev.y },
-          { x: stubX, y: b.y },
-          b,
-        ]);
+      out[out.length - 2].x = newX;
+
+      // Shift the trunk that shares the old X (typically vertical segment end)
+      for (let i = out.length - 3; i >= 0; i--) {
+        if (out[i].x !== oldX) break;
+        out[i].x = newX;
       }
 
-      return simplifyOrthogonal([a, { x: stubX, y: b.y }, b]);
+      return simplifyOrthogonal(out);
     }
 
-    if (
-      norm.y !== 0 &&
-      a.x === b.x &&
-      Math.sign(a.y - b.y) === Math.sign(norm.y)
-    ) {
-      const len = Math.abs(a.y - b.y);
+    // NORTH/SOUTH: expect last segment vertical INTO the port (opposite of normal)
+    if (n.y !== 0) {
+      if (a.x !== b.x) return points;
+      if (Math.sign(b.y - a.y) !== -Math.sign(n.y)) return points;
+
+      const len = Math.abs(b.y - a.y);
       if (len >= minLead) return points;
 
-      const stubY = b.y + norm.y * minLead;
+      const oldY = a.y;
+      const newY = b.y + n.y * minLead;
 
-      if (points.length >= 3) {
-        const prev = points[points.length - 3];
-        return simplifyOrthogonal([
-          ...points.slice(0, -2),
-          { x: prev.x, y: stubY },
-          { x: b.x, y: stubY },
-          b,
-        ]);
+      out[out.length - 2].y = newY;
+
+      for (let i = out.length - 3; i >= 0; i--) {
+        if (out[i].y !== oldY) break;
+        out[i].y = newY;
       }
 
-      return simplifyOrthogonal([a, { x: b.x, y: stubY }, b]);
+      return simplifyOrthogonal(out);
     }
 
     return points;
   }
+}
+
+/**
+ * Create a stable "lead length" per lane so edges that share a side don't overlap
+ * right at the table border, without injecting additional bendpoints.
+ */
+function laneOrderFromOffset(laneOffset: number) {
+  if (laneOffset === 0) return 0;
+  const a = Math.abs(laneOffset);
+  // unique ordering: -1 -> 2, +1 -> 3, -2 -> 4, +2 -> 5, ...
+  return a * 2 + (laneOffset > 0 ? 1 : 0);
 }
 
 function getColumnCenterY(table: Table, columnName: string) {
@@ -263,11 +201,6 @@ function getColumnCenterY(table: Table, columnName: string) {
   return TABLE_HEADER_HEIGHT + safe * TABLE_ROW_HEIGHT + TABLE_ROW_HEIGHT / 2;
 }
 
-/**
- * Ports should represent "this column row" visually.
- * That only really maps to EAST/WEST sides (y coordinate).
- * For NORTH/SOUTH, use centered x to avoid fake "column x".
- */
 function baseAlongForSide(table: Table, side: Side, columnName: string) {
   if (side === "EAST" || side === "WEST")
     return getColumnCenterY(table, columnName);
@@ -287,12 +220,6 @@ function portCenterForSide(
   return { x: TABLE_WIDTH / 2, y: 0 };
 }
 
-/**
- * Minimal-nudge placement:
- * - start at bases (clamped)
- * - only move items when they collide (< minGap)
- * - then shift the whole set back into [min,max] if needed
- */
 function nudgeToMinGap(
   bases: number[],
   min: number,
@@ -325,11 +252,6 @@ function nudgeToMinGap(
   return placed.map((p) => clamp(p, min, max));
 }
 
-/**
- * Choose child port side by cost:
- * - prefer sides facing the parent
- * - slight penalty for N/S (doesn't map to a specific column row)
- */
 function chooseChildSideByCost(args: {
   child: Table;
   parent: Table;
@@ -436,7 +358,7 @@ export async function buildOptimalLayoutElk(
 
   const portMeta = new Map<
     string,
-    { laneIndex: number; laneCount: number; side: Side }
+    { laneOffset: number; laneCount: number; side: Side }
   >();
 
   const availableWidth = Math.max(520, options?.availableWidth ?? 1200);
@@ -572,6 +494,9 @@ export async function buildOptimalLayoutElk(
 
     const h = getTableHeight(t);
 
+    // Pick a "spine lane" so one edge can stay the cleanest (offset 0).
+    const spineIndex = Math.floor((group.length - 1) / 2);
+
     if (side === "EAST" || side === "WEST") {
       const minY = TABLE_HEADER_HEIGHT + TABLE_ROW_HEIGHT / 2;
       const maxY = h - TABLE_ROW_HEIGHT / 2;
@@ -579,28 +504,26 @@ export async function buildOptimalLayoutElk(
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxY - minY);
 
-      // Keep close to actual column row (reduces "unnecessary" bends),
-      // but still separate arrowheads when multiple edges share a side.
-      const minGap = clamp(Math.round(span / (group.length + 1)), 10, 16);
+      // Keep ports close to their true row so routes don't bend more than needed.
+      const minGap = clamp(Math.round(span / (group.length + 1)), 8, 14);
 
-      // If all bases are identical (many refs to same PK row), seed symmetrically
-      // by a small amount (not the full-table spread) so endpoints don't all shift one way.
+      // If they're heavily clustered (same base), seed *slightly* symmetric to avoid one-sided drift.
       const baseMin = Math.min(...bases);
       const baseMax = Math.max(...bases);
       const baseRange = baseMax - baseMin;
       const seeded =
-        group.length > 1 && baseRange < minGap * 0.25
+        group.length > 1 && baseRange < minGap * 0.15
           ? bases.map((b, i) => b + (i - (group.length - 1) / 2) * minGap)
           : bases;
 
       const ys = nudgeToMinGap(seeded, minY, maxY, minGap);
-
       const cx = side === "EAST" ? TABLE_WIDTH : 0;
+
       for (let i = 0; i < group.length; i++) {
         const ep = group[i];
         portCenters.set(ep.portId, { x: cx, y: ys[i], side });
         portMeta.set(ep.portId, {
-          laneIndex: i,
+          laneOffset: i - spineIndex,
           laneCount: group.length,
           side,
         });
@@ -612,24 +535,24 @@ export async function buildOptimalLayoutElk(
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxX - minX);
 
-      const minGap = clamp(Math.round(span / (group.length + 1)), 12, 20);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 10, 18);
 
       const baseMin = Math.min(...bases);
       const baseMax = Math.max(...bases);
       const baseRange = baseMax - baseMin;
       const seeded =
-        group.length > 1 && baseRange < minGap * 0.25
+        group.length > 1 && baseRange < minGap * 0.15
           ? bases.map((b, i) => b + (i - (group.length - 1) / 2) * minGap)
           : bases;
 
       const xs = nudgeToMinGap(seeded, minX, maxX, minGap);
-
       const cy = side === "SOUTH" ? h : 0;
+
       for (let i = 0; i < group.length; i++) {
         const ep = group[i];
         portCenters.set(ep.portId, { x: xs[i], y: cy, side });
         portMeta.set(ep.portId, {
-          laneIndex: i,
+          laneOffset: i - spineIndex,
           laneCount: group.length,
           side,
         });
@@ -637,7 +560,7 @@ export async function buildOptimalLayoutElk(
     }
   }
 
-  // Degree-based margin (avoid huge margins; they often create long detours)
+  // Degree-based margins (too-large margins cause giant detours)
   const degree = new Map<string, number>();
   for (const t of tables) degree.set(t.name, 0);
   for (const r of relations) {
@@ -655,7 +578,6 @@ export async function buildOptimalLayoutElk(
         const c = portCenters.get(ep.portId);
         if (!c) return null;
 
-        // ELK expects port (x,y) as top-left
         return {
           id: ep.portId,
           width: PORT_SIZE,
@@ -706,8 +628,8 @@ export async function buildOptimalLayoutElk(
       "elk.edgeRouting": "ORTHOGONAL",
       "elk.layered.unnecessaryBendpoints": "true",
 
-      // Helps avoid tiny "stubby" first/last segments
-      "elk.orthogonalRouting.minimumSegmentLength": "26",
+      // Encourages fewer tiny segments near ports
+      "elk.orthogonalRouting.minimumSegmentLength": "28",
 
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
 
@@ -756,24 +678,38 @@ export async function buildOptimalLayoutElk(
       let pts = pointsFromElkEdge(e);
       if (!pts) return null;
 
-      // ELK gives route parent -> child; your semantic relation is child -> parent.
+      // ELK gives route parent -> child; our semantic relation is child -> parent.
       // Reverse so markerEnd points at referenced table (toTable).
       pts = pts.slice().reverse();
       pts = simplifyOrthogonal(pts);
 
-      const sm = portMeta.get(`port:child:${idx}`); // start table after reverse
-      const em = portMeta.get(`port:parent:${idx}`); // end table after reverse
+      const sm = portMeta.get(`port:child:${idx}`); // start after reverse
+      const em = portMeta.get(`port:parent:${idx}`); // end after reverse
 
-      // Fan-out only when multiple edges share that table side
-      if (sm && sm.laneCount > 1)
-        pts = addEndpointFan(pts, sm.side, sm.laneIndex, sm.laneCount, "start");
-      if (em && em.laneCount > 1)
-        pts = addEndpointFan(pts, em.side, em.laneIndex, em.laneCount, "end");
+      // Vary lead lengths by lane to avoid stacked endpoints, without adding bendpoints.
+      const BASE_LEAD = 26;
+      const STEP_LEAD = 10; // keep modest; big values make routes look "detoured"
+      const MAX_LEAD = 86;
 
-      // Ensure decent lead lengths even for single edges (or center lanes)
-      const MIN_LEAD = 24;
-      if (sm) pts = ensureMinLead(pts, sm.side, "start", MIN_LEAD);
-      if (em) pts = ensureMinLead(pts, em.side, "end", MIN_LEAD);
+      if (sm) {
+        const order = laneOrderFromOffset(sm.laneOffset);
+        const desiredLead = clamp(
+          BASE_LEAD + order * STEP_LEAD,
+          BASE_LEAD,
+          MAX_LEAD,
+        );
+        pts = extendLeadWithoutExtraBends(pts, sm.side, "start", desiredLead);
+      }
+
+      if (em) {
+        const order = laneOrderFromOffset(em.laneOffset);
+        const desiredLead = clamp(
+          BASE_LEAD + order * STEP_LEAD,
+          BASE_LEAD,
+          MAX_LEAD,
+        );
+        pts = extendLeadWithoutExtraBends(pts, em.side, "end", desiredLead);
+      }
 
       pts = simplifyOrthogonal(pts);
 

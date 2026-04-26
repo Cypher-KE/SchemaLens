@@ -15,6 +15,10 @@ type BuildElkResult = {
 };
 
 type Side = "EAST" | "WEST" | "NORTH" | "SOUTH";
+const SIDES: Side[] = ["EAST", "WEST", "NORTH", "SOUTH"];
+
+// Small but visible; ports are only for routing anchors
+const PORT_SIZE = 2;
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -49,35 +53,6 @@ function simplifyOrthogonal(points: Point[]) {
   return removeConsecutiveDuplicates(out);
 }
 
-function getColumnCenterY(table: Table, columnName: string) {
-  const idx = table.columns.findIndex((c) => c.name === columnName);
-  const safe = idx >= 0 ? idx : 0;
-  return TABLE_HEADER_HEIGHT + safe * TABLE_ROW_HEIGHT + TABLE_ROW_HEIGHT / 2;
-}
-
-function getColumnCenterX(table: Table, columnName: string) {
-  const idx = table.columns.findIndex((c) => c.name === columnName);
-  const safe = idx >= 0 ? idx : 0;
-  const denom = Math.max(2, table.columns.length + 1);
-  return (TABLE_WIDTH * (safe + 1)) / denom;
-}
-
-function sideToward(
-  a: { x: number; y: number; w: number; h: number },
-  b: { x: number; y: number; w: number; h: number },
-): Side {
-  const ax = a.x + a.w / 2;
-  const ay = a.y + a.h / 2;
-  const bx = b.x + b.w / 2;
-  const by = b.y + b.h / 2;
-
-  const dx = bx - ax;
-  const dy = by - ay;
-
-  if (Math.abs(dx) >= Math.abs(dy) * 1.15) return dx >= 0 ? "EAST" : "WEST";
-  return dy >= 0 ? "SOUTH" : "NORTH";
-}
-
 function oppositeSide(s: Side): Side {
   if (s === "EAST") return "WEST";
   if (s === "WEST") return "EAST";
@@ -85,108 +60,194 @@ function oppositeSide(s: Side): Side {
   return "NORTH";
 }
 
-function addEndpointFan(
-  points: Point[],
-  side: Side,
-  laneIndex: number,
-  laneCount: number,
-  which: "start" | "end",
-) {
-  if (points.length < 2) return points;
-  if (laneCount <= 1) return points;
-
-  const lane = laneIndex - (laneCount - 1) / 2;
-
-  const BASE = 14;
-  const STEP = 10;
-  const dist = BASE + lane * STEP;
-
-  const norm =
-    side === "EAST"
-      ? { x: 1, y: 0 }
-      : side === "WEST"
-        ? { x: -1, y: 0 }
-        : side === "SOUTH"
-          ? { x: 0, y: 1 }
-          : { x: 0, y: -1 };
-
-  if (which === "start") {
-    const start = points[0];
-    const next = points[1];
-
-    if (norm.x !== 0) {
-      const fx = start.x + norm.x * dist;
-      return simplifyOrthogonal([
-        start,
-        { x: fx, y: start.y },
-        { x: fx, y: next.y },
-        ...points.slice(1),
-      ]);
-    } else {
-      const fy = start.y + norm.y * dist;
-      return simplifyOrthogonal([
-        start,
-        { x: start.x, y: fy },
-        { x: next.x, y: fy },
-        ...points.slice(1),
-      ]);
-    }
-  } else {
-    const prev = points[points.length - 2];
-    const end = points[points.length - 1];
-
-    if (norm.x !== 0) {
-      const fx = end.x + norm.x * dist;
-      return simplifyOrthogonal([
-        ...points.slice(0, -1),
-        { x: fx, y: prev.y },
-        { x: fx, y: end.y },
-        end,
-      ]);
-    } else {
-      const fy = end.y + norm.y * dist;
-      return simplifyOrthogonal([
-        ...points.slice(0, -1),
-        { x: prev.x, y: fy },
-        { x: end.x, y: fy },
-        end,
-      ]);
-    }
-  }
+function sideNormal(s: Side): Point {
+  if (s === "EAST") return { x: 1, y: 0 };
+  if (s === "WEST") return { x: -1, y: 0 };
+  if (s === "SOUTH") return { x: 0, y: 1 };
+  return { x: 0, y: -1 };
 }
 
-function distributeOnSpan(
-  base: number[],
+function getColumnCenterY(table: Table, columnName: string) {
+  const idx = table.columns.findIndex((c) => c.name === columnName);
+  const safe = idx >= 0 ? idx : 0;
+  return TABLE_HEADER_HEIGHT + safe * TABLE_ROW_HEIGHT + TABLE_ROW_HEIGHT / 2;
+}
+
+/**
+ * We want ports to represent "this column row" visually.
+ * That only makes sense on EAST/WEST sides (y coordinate).
+ * For NORTH/SOUTH, use a centered x (looks clean and avoids fake "column x").
+ */
+function baseAlongForSide(table: Table, side: Side, columnName: string) {
+  if (side === "EAST" || side === "WEST")
+    return getColumnCenterY(table, columnName);
+  return TABLE_WIDTH / 2;
+}
+
+function portCenterForSide(
+  table: Table,
+  side: Side,
+  columnName: string,
+): Point {
+  const h = getTableHeight(table);
+  if (side === "EAST")
+    return { x: TABLE_WIDTH, y: getColumnCenterY(table, columnName) };
+  if (side === "WEST") return { x: 0, y: getColumnCenterY(table, columnName) };
+  if (side === "SOUTH") return { x: TABLE_WIDTH / 2, y: h };
+  return { x: TABLE_WIDTH / 2, y: 0 };
+}
+
+/**
+ * Minimal-nudge placement:
+ * - start at bases (clamped)
+ * - only move items when they collide (< minGap)
+ * - then shift the whole set back into [min,max] if needed
+ *
+ * This preserves "attach to this column row" much better than your previous
+ * distributeOnSpan(), which drifted ports even when they didn't need to.
+ */
+function nudgeToMinGap(
+  bases: number[],
   min: number,
   max: number,
   minGap: number,
 ) {
-  const span = Math.max(0, max - min);
-  const n = base.length;
+  const n = bases.length;
   if (n === 0) return [];
 
-  if (n * minGap > span && span > 0) {
-    const step = span / (n + 1);
-    return Array.from({ length: n }, (_, i) => min + (i + 1) * step);
+  // initial
+  const placed = bases.map((b) => clamp(b, min, max));
+
+  // forward enforce
+  for (let i = 1; i < n; i++) {
+    if (placed[i] - placed[i - 1] < minGap) {
+      placed[i] = placed[i - 1] + minGap;
+    }
   }
 
-  const placed: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const lane = i - (n - 1) / 2;
-    const desired = base[i] + lane * minGap;
-    placed.push(clamp(desired, min, max));
+  // shift down if overflow
+  const overflow = placed[n - 1] - max;
+  if (overflow > 0) {
+    for (let i = 0; i < n; i++) placed[i] -= overflow;
   }
 
-  for (let i = 1; i < placed.length; i++) {
-    if (placed[i] - placed[i - 1] < minGap) placed[i] = placed[i - 1] + minGap;
+  // backward enforce
+  for (let i = n - 2; i >= 0; i--) {
+    if (placed[i + 1] - placed[i] < minGap) {
+      placed[i] = placed[i + 1] - minGap;
+    }
   }
-  for (let i = placed.length - 2; i >= 0; i--) {
-    if (placed[i + 1] - placed[i] < minGap) placed[i] = placed[i + 1] - minGap;
-  }
-  for (let i = 0; i < placed.length; i++)
-    placed[i] = clamp(placed[i], min, max);
 
-  return placed;
+  // shift up if underflow
+  const underflow = min - placed[0];
+  if (underflow > 0) {
+    for (let i = 0; i < n; i++) placed[i] += underflow;
+  }
+
+  return placed.map((p) => clamp(p, min, max));
+}
+
+/**
+ * Choose a side on CHILD (fromTable) that yields a short orthogonal path to PARENT (toTable),
+ * while strongly preferring a side that actually faces the parent.
+ *
+ * Also adds a small penalty for NORTH/SOUTH since those don't correspond to a real "column row".
+ */
+function chooseChildSideByCost(args: {
+  child: Table;
+  parent: Table;
+  childBox: { x: number; y: number; w: number; h: number };
+  parentBox: { x: number; y: number; w: number; h: number };
+  childColumn: string;
+  parentColumn: string;
+}): Side {
+  const { child, parent, childBox, parentBox, childColumn, parentColumn } =
+    args;
+
+  const childCenter = {
+    x: childBox.x + childBox.w / 2,
+    y: childBox.y + childBox.h / 2,
+  };
+  const parentCenter = {
+    x: parentBox.x + parentBox.w / 2,
+    y: parentBox.y + parentBox.h / 2,
+  };
+
+  const vec = {
+    x: parentCenter.x - childCenter.x,
+    y: parentCenter.y - childCenter.y,
+  };
+  const len = Math.hypot(vec.x, vec.y) || 1;
+
+  let bestSide: Side = "WEST";
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const side of SIDES) {
+    const parentSide = oppositeSide(side);
+
+    const childPort = portCenterForSide(child, side, childColumn);
+    const parentPort = portCenterForSide(parent, parentSide, parentColumn);
+
+    const childWorld = {
+      x: childBox.x + childPort.x,
+      y: childBox.y + childPort.y,
+    };
+    const parentWorld = {
+      x: parentBox.x + parentPort.x,
+      y: parentBox.y + parentPort.y,
+    };
+
+    const manhattan =
+      Math.abs(parentWorld.x - childWorld.x) +
+      Math.abs(parentWorld.y - childWorld.y);
+
+    // Facing penalty (prefer sides that point toward the parent)
+    const n = sideNormal(side);
+    const dot = (vec.x * n.x + vec.y * n.y) / len; // [-1..1]
+    const facingPenalty = dot < 0 ? 2500 : (1 - dot) * 220; // huge penalty if pointing away
+
+    // NORTH/SOUTH penalty: only use if it materially helps
+    const nsPenalty = side === "NORTH" || side === "SOUTH" ? 160 : 0;
+
+    const score = manhattan + facingPenalty + nsPenalty;
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestSide = side;
+    }
+  }
+
+  return bestSide;
+}
+
+function pointsFromElkEdge(e: any): Point[] | null {
+  const sections = e.sections ?? [];
+  if (!sections.length) return null;
+
+  const out: Point[] = [];
+
+  for (const sec of sections) {
+    if (!sec?.startPoint || !sec?.endPoint) continue;
+    const pts = [sec.startPoint, ...(sec.bendPoints ?? []), sec.endPoint].map(
+      (p: any) => ({
+        x: p.x,
+        y: p.y,
+      }),
+    ) as Point[];
+
+    if (!pts.length) continue;
+
+    if (out.length) {
+      const last = out[out.length - 1];
+      const first = pts[0];
+      if (last.x === first.x && last.y === first.y) out.push(...pts.slice(1));
+      else out.push(...pts);
+    } else {
+      out.push(...pts);
+    }
+  }
+
+  return out.length ? simplifyOrthogonal(out) : null;
 }
 
 export async function buildOptimalLayoutElk(
@@ -195,41 +256,29 @@ export async function buildOptimalLayoutElk(
   options?: { availableWidth?: number },
 ): Promise<BuildElkResult> {
   const elk = new ELK();
-
   const tableByName = new Map(tables.map((t) => [t.name, t]));
 
-  const inCount = new Map<string, number>();
-  const outCount = new Map<string, number>();
-  for (const t of tables) {
-    inCount.set(t.name, 0);
-    outCount.set(t.name, 0);
-  }
-  for (const r of relations) {
-    outCount.set(r.fromTable, (outCount.get(r.fromTable) ?? 0) + 1);
-    inCount.set(r.toTable, (inCount.get(r.toTable) ?? 0) + 1);
-  }
-  const degree = (name: string) =>
-    (inCount.get(name) ?? 0) + (outCount.get(name) ?? 0);
-  const maxDeg = Math.max(0, ...tables.map((t) => degree(t.name)));
-  const HUB_THRESHOLD = Math.max(8, Math.floor(maxDeg * 0.75));
-
+  // Use a more “fit width” target and don’t wrap too early (your 0.78 caused early wrapping)
   const availableWidth = Math.max(520, options?.availableWidth ?? 1200);
   const targetWrapWidth = Math.max(
     520,
-    Math.floor((availableWidth - LAYOUT_PADDING * 2) * 0.78),
+    Math.floor((availableWidth - LAYOUT_PADDING * 2) * 0.98),
   );
 
+  // --- PRE-LAYOUT (no ports) to get approximate boxes ---
   const preNodes = tables.map((t) => ({
     id: t.name,
     width: TABLE_WIDTH,
     height: getTableHeight(t),
   }));
 
+  // IMPORTANT: for layout quality we treat edges as PARENT -> CHILD (referenced -> referencing)
   const preEdges = relations
     .map((r, i) => {
       if (!tableByName.has(r.fromTable) || !tableByName.has(r.toTable))
         return null;
-      return { id: `pre:${i}`, sources: [r.fromTable], targets: [r.toTable] };
+      // parent = toTable, child = fromTable
+      return { id: `pre:${i}`, sources: [r.toTable], targets: [r.fromTable] };
     })
     .filter(Boolean);
 
@@ -239,14 +288,14 @@ export async function buildOptimalLayoutElk(
     edges: preEdges,
     layoutOptions: {
       "elk.algorithm": "layered",
-      "elk.direction": "LEFT",
+      "elk.direction": "RIGHT",
       "elk.edgeRouting": "POLYLINE",
-
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
 
-      "elk.spacing.nodeNode": "32",
+      "elk.spacing.nodeNode": "28",
       "elk.layered.spacing.nodeNodeBetweenLayers": "84",
-      "elk.layered.wrapping.strategy": "MULTI_EDGE",
+
+      "elk.layered.wrapping.strategy": "SINGLE_EDGE",
       "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
 
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
@@ -270,56 +319,56 @@ export async function buildOptimalLayoutElk(
     });
   }
 
+  // --- Build ports based on relation endpoints ---
   type Endpoint = {
     relIndex: number;
     tableName: string;
     columnName: string;
     side: Side;
-    baseAlong: number;
     portId: string;
-    kind: "from" | "to";
+    kind: "child" | "parent";
+    baseAlong: number;
   };
 
   const endpoints: Endpoint[] = [];
 
   relations.forEach((r, i) => {
-    const fromT = tableByName.get(r.fromTable);
-    const toT = tableByName.get(r.toTable);
-    const fromB = preBox.get(r.fromTable);
-    const toB = preBox.get(r.toTable);
-    if (!fromT || !toT || !fromB || !toB) return;
+    const child = tableByName.get(r.fromTable);
+    const parent = tableByName.get(r.toTable);
+    const childB = preBox.get(r.fromTable);
+    const parentB = preBox.get(r.toTable);
+    if (!child || !parent || !childB || !parentB) return;
+    if (r.fromTable === r.toTable) return;
 
-    const fromSide = sideToward(fromB, toB);
-    const toSide = sideToward(toB, fromB);
+    const childSide = chooseChildSideByCost({
+      child,
+      parent,
+      childBox: childB,
+      parentBox: parentB,
+      childColumn: r.fromColumn,
+      parentColumn: r.toColumn,
+    });
 
-    const baseFrom =
-      fromSide === "EAST" || fromSide === "WEST"
-        ? getColumnCenterY(fromT, r.fromColumn)
-        : getColumnCenterX(fromT, r.fromColumn);
-
-    const baseTo =
-      toSide === "EAST" || toSide === "WEST"
-        ? getColumnCenterY(toT, r.toColumn)
-        : getColumnCenterX(toT, r.toColumn);
+    const parentSide = oppositeSide(childSide);
 
     endpoints.push({
       relIndex: i,
       tableName: r.fromTable,
       columnName: r.fromColumn,
-      side: fromSide,
-      baseAlong: baseFrom,
-      portId: `port:from:${i}`,
-      kind: "from",
+      side: childSide,
+      baseAlong: baseAlongForSide(child, childSide, r.fromColumn),
+      portId: `port:child:${i}`,
+      kind: "child",
     });
 
     endpoints.push({
       relIndex: i,
       tableName: r.toTable,
       columnName: r.toColumn,
-      side: toSide,
-      baseAlong: baseTo,
-      portId: `port:to:${i}`,
-      kind: "to",
+      side: parentSide,
+      baseAlong: baseAlongForSide(parent, parentSide, r.toColumn),
+      portId: `port:parent:${i}`,
+      kind: "parent",
     });
   });
 
@@ -330,11 +379,8 @@ export async function buildOptimalLayoutElk(
     endpointsByTableSide.get(k)!.push(ep);
   }
 
-  const portPositions = new Map<string, { x: number; y: number; side: Side }>();
-  const portMeta = new Map<
-    string,
-    { laneIndex: number; laneCount: number; side: Side }
-  >();
+  // portId -> CENTER position within the node
+  const portCenters = new Map<string, { x: number; y: number; side: Side }>();
 
   for (const [key, group] of endpointsByTableSide.entries()) {
     group.sort((a, b) => a.baseAlong - b.baseAlong || a.relIndex - b.relIndex);
@@ -346,60 +392,63 @@ export async function buildOptimalLayoutElk(
     const h = getTableHeight(t);
 
     if (side === "EAST" || side === "WEST") {
-      const minY = TABLE_HEADER_HEIGHT + 10;
-      const maxY = h - 10;
+      // Keep ports on/near actual column row centers
+      const minY = TABLE_HEADER_HEIGHT + TABLE_ROW_HEIGHT / 2;
+      const maxY = h - TABLE_ROW_HEIGHT / 2;
+
       const bases = group.map((g) => g.baseAlong);
-      const ys = distributeOnSpan(bases, minY, maxY, 12);
+      const ys = nudgeToMinGap(bases, minY, maxY, 8);
+
+      const cx = side === "EAST" ? TABLE_WIDTH : 0;
 
       for (let i = 0; i < group.length; i++) {
-        const ep = group[i];
-        const x = side === "EAST" ? TABLE_WIDTH : 0;
-        const y = ys[i];
-        portPositions.set(ep.portId, { x, y, side });
-        portMeta.set(ep.portId, {
-          laneIndex: i,
-          laneCount: group.length,
-          side,
-        });
+        portCenters.set(group[i].portId, { x: cx, y: ys[i], side });
       }
     } else {
-      const minX = 12;
-      const maxX = TABLE_WIDTH - 12;
+      // NORTH/SOUTH: centered-ish x looks better than pretending there's a "column x"
+      const minX = 18;
+      const maxX = TABLE_WIDTH - 18;
+
       const bases = group.map((g) => g.baseAlong);
-      const xs = distributeOnSpan(bases, minX, maxX, 14);
+      const xs = nudgeToMinGap(bases, minX, maxX, 12);
+
+      const cy = side === "SOUTH" ? h : 0;
 
       for (let i = 0; i < group.length; i++) {
-        const ep = group[i];
-        const x = xs[i];
-        const y = side === "SOUTH" ? h : 0;
-        portPositions.set(ep.portId, { x, y, side });
-        portMeta.set(ep.portId, {
-          laneIndex: i,
-          laneCount: group.length,
-          side,
-        });
+        portCenters.set(group[i].portId, { x: xs[i], y: cy, side });
       }
     }
   }
 
+  // Degree-based margin (smaller than before; large margins can cause huge detours)
+  const degree = new Map<string, number>();
+  for (const t of tables) degree.set(t.name, 0);
+  for (const r of relations) {
+    degree.set(r.fromTable, (degree.get(r.fromTable) ?? 0) + 1);
+    degree.set(r.toTable, (degree.get(r.toTable) ?? 0) + 1);
+  }
+
   const elkNodes = tables.map((t) => {
+    const d = degree.get(t.name) ?? 0;
+    const margin = d >= 10 ? 34 : d >= 6 ? 26 : 18;
+
     const ports = endpoints
       .filter((ep) => ep.tableName === t.name)
       .map((ep) => {
-        const pos = portPositions.get(ep.portId)!;
+        const c = portCenters.get(ep.portId);
+        if (!c) return null;
+
+        // ELK uses (x,y) as top-left of the port
         return {
           id: ep.portId,
-          width: 1,
-          height: 1,
-          x: pos.x,
-          y: pos.y,
-          layoutOptions: { "elk.port.side": pos.side },
+          width: PORT_SIZE,
+          height: PORT_SIZE,
+          x: c.x - PORT_SIZE / 2,
+          y: c.y - PORT_SIZE / 2,
+          layoutOptions: { "elk.port.side": c.side },
         };
-      });
-
-    const d = degree(t.name);
-    const margin =
-      d >= HUB_THRESHOLD ? 46 : d >= Math.max(5, HUB_THRESHOLD - 2) ? 34 : 22;
+      })
+      .filter(Boolean);
 
     return {
       id: t.name,
@@ -413,14 +462,15 @@ export async function buildOptimalLayoutElk(
     };
   });
 
+  // ELK edges are PARENT -> CHILD for better layered placement + routing
   const elkEdges = relations
     .map((r, i) => {
       if (!tableByName.has(r.fromTable) || !tableByName.has(r.toTable))
         return null;
       return {
         id: `edge:${i}`,
-        sources: [`port:from:${i}`],
-        targets: [`port:to:${i}`],
+        sources: [`port:parent:${i}`], // toTable
+        targets: [`port:child:${i}`], // fromTable
       };
     })
     .filter(Boolean) as Array<{
@@ -435,17 +485,17 @@ export async function buildOptimalLayoutElk(
     edges: elkEdges,
     layoutOptions: {
       "elk.algorithm": "layered",
-      "elk.direction": "LEFT",
+      "elk.direction": "RIGHT",
       "elk.edgeRouting": "ORTHOGONAL",
 
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
 
-      "elk.spacing.nodeNode": "34",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "92",
+      "elk.spacing.nodeNode": "28",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "86",
 
-      "elk.spacing.edgeEdge": "24",
-      "elk.spacing.edgeNode": "26",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": "24",
+      "elk.spacing.edgeEdge": "14",
+      "elk.spacing.edgeNode": "18",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "16",
 
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
@@ -455,9 +505,7 @@ export async function buildOptimalLayoutElk(
       "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
       "elk.layered.nodePlacement.favorStraightEdges": "true",
 
-      "elk.layered.compaction.postCompaction.strategy": "EDGE_LENGTH",
-
-      "elk.layered.wrapping.strategy": "MULTI_EDGE",
+      "elk.layered.wrapping.strategy": "SINGLE_EDGE",
       "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
 
       "elk.layered.mergeEdges": "false",
@@ -482,27 +530,19 @@ export async function buildOptimalLayoutElk(
       const relation = relations[idx];
       if (!relation) return null;
 
-      const sec = e.sections?.[0];
-      if (!sec?.startPoint || !sec?.endPoint) return null;
+      let pts = pointsFromElkEdge(e);
+      if (!pts) return null;
 
-      let pts = [sec.startPoint, ...(sec.bendPoints ?? []), sec.endPoint].map(
-        (p: any) => ({ x: p.x, y: p.y }),
-      );
-
+      // ELK route is parent -> child; your semantic relation is child -> parent.
+      // Reverse so markerEnd points at the referenced table (toTable).
+      pts = simplifyOrthogonal(pts).slice().reverse();
       pts = simplifyOrthogonal(pts);
-
-      const sm = portMeta.get(`port:from:${idx}`);
-      const em = portMeta.get(`port:to:${idx}`);
-
-      if (sm)
-        pts = addEndpointFan(pts, sm.side, sm.laneIndex, sm.laneCount, "start");
-      if (em)
-        pts = addEndpointFan(pts, em.side, em.laneIndex, em.laneCount, "end");
 
       return { id: e.id, relation, points: pts } satisfies RoutedEdge;
     })
     .filter(Boolean);
 
+  // --- normalize to positive canvas coords with padding ---
   let minX = Infinity;
   let minY = Infinity;
 

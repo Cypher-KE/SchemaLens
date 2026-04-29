@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "react";
 import { AnimatePresence } from "framer-motion";
 import { toPng } from "html-to-image";
 import { jsPDF } from "jspdf";
-import type { Layout, ParseResult, RoutedEdge } from "./types";
+import type { DiagramFormat, Layout, ParseResult, RoutedEdge } from "./types";
 import {
   parseSchema,
   buildLayout,
@@ -12,15 +12,18 @@ import {
   LAYOUT_GAP_Y,
 } from "./utils/schemaParser";
 import { buildOptimalLayoutElk } from "./utils/elkLayout";
+import { parseErdDiagram, SAMPLE_ERD } from "./utils/erdParser";
 
 import Sidebar from "./components/Sidebar";
 import RelationLayer from "./components/RelationLayer";
 import TableCard from "./components/TableCard";
 
 export default function App() {
+  const [format, setFormat] = useState<DiagramFormat>("sql");
   const [schemaText, setSchemaText] = useState(SAMPLE_SCHEMA);
   const [search, setSearch] = useState("");
   const [activeTable, setActiveTable] = useState<string | null>(null);
+
   const [result, setResult] = useState<ParseResult>(() =>
     parseSchema(SAMPLE_SCHEMA),
   );
@@ -57,7 +60,7 @@ export default function App() {
         backgroundColor: getExportBg(),
       });
       const link = document.createElement("a");
-      link.download = "database-schema.png";
+      link.download = "database-diagram.png";
       link.href = dataUrl;
       link.click();
     } catch (err) {
@@ -78,7 +81,7 @@ export default function App() {
       const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
 
       pdf.addImage(dataUrl, "PNG", 0, 0, pdfWidth, pdfHeight);
-      pdf.save("database-schema.pdf");
+      pdf.save("database-diagram.pdf");
     } catch (err) {
       console.error("Failed to export PDF", err);
     }
@@ -154,7 +157,21 @@ export default function App() {
     };
   }, [filteredTables, filteredRelations, mainWidth]);
 
-  const parsedSummary = `${result.tables.length} tables • ${result.relations.length} relations`;
+  const parsedSummary = `${result.tables.length} tables • ${result.relations.length} relations • ${result.format ?? format}`;
+
+  const visualize = () => {
+    const trimmed = schemaText.trim();
+    const autoIsErd = /^erDiagram\b/i.test(trimmed);
+    const chosen: DiagramFormat = autoIsErd ? "erd" : format;
+
+    const next =
+      chosen === "erd" ? parseErdDiagram(schemaText) : parseSchema(schemaText);
+
+    setResult(next);
+    setActiveTable(null);
+    if (autoIsErd && format !== "erd") setFormat("erd");
+    if (!autoIsErd && format !== "sql") setFormat("sql");
+  };
 
   return (
     <div
@@ -165,18 +182,25 @@ export default function App() {
         <Sidebar
           schemaText={schemaText}
           setSchemaText={setSchemaText}
+          format={format}
+          setFormat={setFormat}
           search={search}
           setSearch={setSearch}
           activeTable={activeTable}
           setActiveTable={setActiveTable}
           parsedSummary={parsedSummary}
-          onVisualize={() => {
-            setResult(parseSchema(schemaText));
-            setActiveTable(null);
-          }}
-          onLoadSample={() => {
+          onVisualize={visualize}
+          onLoadSampleSql={() => {
+            setFormat("sql");
             setSchemaText(SAMPLE_SCHEMA);
             setResult(parseSchema(SAMPLE_SCHEMA));
+            setSearch("");
+            setActiveTable(null);
+          }}
+          onLoadSampleErd={() => {
+            setFormat("erd");
+            setSchemaText(SAMPLE_ERD);
+            setResult(parseErdDiagram(SAMPLE_ERD));
             setSearch("");
             setActiveTable(null);
           }}
@@ -198,6 +222,7 @@ export default function App() {
               }}
             >
               <RelationLayer
+                mode={result.format ?? format}
                 tables={filteredTables}
                 layout={layout}
                 relations={filteredRelations}
@@ -216,6 +241,7 @@ export default function App() {
                       table={table}
                       layoutBox={box}
                       index={index}
+                      mode={result.format ?? format}
                       isActive={!activeTable || activeTable === table.name}
                       onToggleActive={() =>
                         setActiveTable((cur) =>

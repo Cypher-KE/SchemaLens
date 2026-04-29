@@ -34,7 +34,7 @@ CREATE TABLE comments (
 );`;
 
 const CONSTRAINT_KEYWORDS =
-  /(NOT\s+NULL|NULL|PRIMARY\s+KEY|REFERENCES|UNIQUE|DEFAULT|CHECK|CONSTRAINT)/i;
+  /(NOT\s+NULL|NULL|PRIMARY\s+KEY|REFERENCES|UNIQUE|DEFAULT|CHECK|CONSTRAINT|FOREIGN\s+KEY)/i;
 
 function splitDefinitions(body: string): string[] {
   const parts: string[] = [];
@@ -98,8 +98,10 @@ export function parseSchema(schemaText: string): ParseResult {
       name: string;
       type: string;
       isPrimaryKey: boolean;
+      isForeignKey?: boolean;
     }> = [];
     const primaryColumns = new Set<string>();
+    const fkColumns = new Set<string>();
 
     for (const definition of definitions) {
       const normalized = definition.trim();
@@ -124,6 +126,7 @@ export function parseSchema(schemaText: string): ParseResult {
         const fromColumn = parseColumnsList(tableFkMatch[1])[0];
         const toTable = cleanIdentifier(tableFkMatch[2]);
         const toColumn = parseColumnsList(tableFkMatch[3])[0];
+        if (fromColumn) fkColumns.add(fromColumn);
         if (fromColumn && toTable && toColumn) {
           relations.push({
             fromTable: tableName,
@@ -147,6 +150,7 @@ export function parseSchema(schemaText: string): ParseResult {
         /REFERENCES\s+[`"\[]?(\w+)[`"\]]?\s*\(([^)]+)\)/i,
       );
       if (inlineFkMatch) {
+        fkColumns.add(columnName);
         relations.push({
           fromTable: tableName,
           fromColumn: columnName,
@@ -162,15 +166,16 @@ export function parseSchema(schemaText: string): ParseResult {
       name: tableName,
       columns: columns.map((column) => ({
         ...column,
+        isForeignKey: fkColumns.has(column.name),
         isPrimaryKey: column.isPrimaryKey || primaryColumns.has(column.name),
       })),
     });
   }
 
-  return { tables, relations };
+  return { tables, relations, format: "sql" };
 }
 
-export const TABLE_WIDTH = 290;
+export const TABLE_WIDTH = 340;
 export const TABLE_HEADER_HEIGHT = 44;
 export const TABLE_ROW_HEIGHT = 30;
 

@@ -1,15 +1,25 @@
 import { motion } from "framer-motion";
+import type { DiagramFormat } from "../types";
 
 type SidebarProps = {
   schemaText: string;
   setSchemaText: (val: string) => void;
+
+  format: DiagramFormat;
+  setFormat: (val: DiagramFormat) => void;
+
   search: string;
   setSearch: (val: string) => void;
+
   activeTable: string | null;
   setActiveTable: (val: string | null) => void;
+
   parsedSummary: string;
+
   onVisualize: () => void;
-  onLoadSample: () => void;
+  onLoadSampleSql: () => void;
+  onLoadSampleErd: () => void;
+
   onExportImage: () => void;
   onExportPDF: () => void;
 };
@@ -17,13 +27,16 @@ type SidebarProps = {
 export default function Sidebar({
   schemaText,
   setSchemaText,
+  format,
+  setFormat,
   search,
   setSearch,
   activeTable,
   setActiveTable,
   parsedSummary,
   onVisualize,
-  onLoadSample,
+  onLoadSampleSql,
+  onLoadSampleErd,
   onExportImage,
   onExportPDF,
 }: SidebarProps) {
@@ -40,44 +53,81 @@ export default function Sidebar({
             SchemaCanvas
           </p>
           <h1 className="text-3xl font-semibold tracking-tight text-white">
-            Visualize your database in seconds
+            Visualize SQL or ERD in seconds
           </h1>
           <p className="text-sm text-slate-300">
-            Paste SQL CREATE TABLE statements, then inspect table structures and
-            foreign key links.
+            Paste SQL <span className="font-semibold">CREATE TABLE</span> or a
+            Mermaid <span className="font-semibold">erDiagram</span>.
           </p>
         </div>
 
         <div className="space-y-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4">
-          <label
-            htmlFor="schemaInput"
-            className="text-sm font-medium text-slate-200"
-          >
-            SQL Schema
-          </label>
+          <div className="flex items-center justify-between gap-3">
+            <label
+              htmlFor="schemaInput"
+              className="text-sm font-medium text-slate-200"
+            >
+              Input
+            </label>
+
+            <div className="inline-flex overflow-hidden rounded-lg border border-slate-700">
+              <button
+                onClick={() => setFormat("sql")}
+                className={`px-3 py-1.5 text-xs font-semibold ${
+                  format === "sql"
+                    ? "bg-sky-500 text-slate-950"
+                    : "bg-slate-950/40 text-slate-200"
+                }`}
+              >
+                SQL
+              </button>
+              <button
+                onClick={() => setFormat("erd")}
+                className={`px-3 py-1.5 text-xs font-semibold ${
+                  format === "erd"
+                    ? "bg-sky-500 text-slate-950"
+                    : "bg-slate-950/40 text-slate-200"
+                }`}
+              >
+                ERD
+              </button>
+            </div>
+          </div>
+
           <textarea
             id="schemaInput"
             value={schemaText}
             onChange={(e) => setSchemaText(e.target.value)}
             className="h-64 w-full resize-none rounded-lg border border-slate-700 bg-slate-950/80 p-3 font-mono text-xs leading-5 text-slate-100 outline-none transition focus:border-sky-400"
-            placeholder="Paste CREATE TABLE statements..."
+            placeholder={
+              format === "erd"
+                ? 'Paste Mermaid "erDiagram" here...'
+                : "Paste CREATE TABLE statements..."
+            }
           />
+
           <div className="flex flex-wrap gap-2">
             <button
               onClick={onVisualize}
               className="rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400"
             >
-              Visualize Schema
+              Visualize
             </button>
             <button
-              onClick={onLoadSample}
+              onClick={onLoadSampleSql}
               className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-400"
             >
-              Load Sample
+              Load SQL Sample
+            </button>
+            <button
+              onClick={onLoadSampleErd}
+              className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-400"
+            >
+              Load ERD Sample
             </button>
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-2 mt-2 border-t border-slate-700/50">
+          <div className="mt-2 flex flex-wrap gap-2 border-t border-slate-700/50 pt-2">
             <button
               onClick={onExportImage}
               className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-400 hover:bg-slate-800"

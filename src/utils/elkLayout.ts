@@ -98,10 +98,12 @@ function extendLeadWithoutExtraBends(
       const newX = a.x + n.x * minLead;
 
       out[1].x = newX;
+
       for (let i = 2; i < out.length; i++) {
         if (out[i].x !== oldX) break;
         out[i].x = newX;
       }
+
       return simplifyOrthogonal(out);
     }
 
@@ -116,10 +118,12 @@ function extendLeadWithoutExtraBends(
       const newY = a.y + n.y * minLead;
 
       out[1].y = newY;
+
       for (let i = 2; i < out.length; i++) {
         if (out[i].y !== oldY) break;
         out[i].y = newY;
       }
+
       return simplifyOrthogonal(out);
     }
 
@@ -140,10 +144,12 @@ function extendLeadWithoutExtraBends(
     const newX = b.x + n.x * minLead;
 
     out[out.length - 2].x = newX;
+
     for (let i = out.length - 3; i >= 0; i--) {
       if (out[i].x !== oldX) break;
       out[i].x = newX;
     }
+
     return simplifyOrthogonal(out);
   }
 
@@ -158,10 +164,12 @@ function extendLeadWithoutExtraBends(
     const newY = b.y + n.y * minLead;
 
     out[out.length - 2].y = newY;
+
     for (let i = out.length - 3; i >= 0; i--) {
       if (out[i].y !== oldY) break;
       out[i].y = newY;
     }
+
     return simplifyOrthogonal(out);
   }
 
@@ -263,6 +271,77 @@ function pointsFromElkEdge(e: any): Point[] | null {
   }
 
   return out.length ? simplifyOrthogonal(out) : null;
+}
+
+function ensureMinEndpointLegs(points: Point[], minLeg: number) {
+  if (points.length < 2) return points;
+
+  const out = points.map((p) => ({ ...p }));
+
+  const s0 = out[0];
+  const s1 = out[1];
+
+  if (s0.x === s1.x) {
+    const dir = Math.sign(s1.y - s0.y);
+    const len = Math.abs(s1.y - s0.y);
+    if (dir !== 0 && len < minLeg) {
+      const oldY = s1.y;
+      const newY = s0.y + dir * minLeg;
+      out[1].y = newY;
+
+      for (let i = 2; i < out.length; i++) {
+        if (out[i].y !== oldY) break;
+        out[i].y = newY;
+      }
+    }
+  } else if (s0.y === s1.y) {
+    const dir = Math.sign(s1.x - s0.x);
+    const len = Math.abs(s1.x - s0.x);
+    if (dir !== 0 && len < minLeg) {
+      const oldX = s1.x;
+      const newX = s0.x + dir * minLeg;
+      out[1].x = newX;
+
+      for (let i = 2; i < out.length; i++) {
+        if (out[i].x !== oldX) break;
+        out[i].x = newX;
+      }
+    }
+  }
+
+  const n = out.length;
+  const e0 = out[n - 2];
+  const e1 = out[n - 1];
+
+  if (e0.x === e1.x) {
+    const dir = Math.sign(e1.y - e0.y);
+    const len = Math.abs(e1.y - e0.y);
+    if (dir !== 0 && len < minLeg) {
+      const oldY = e0.y;
+      const newY = e1.y - dir * minLeg;
+      out[n - 2].y = newY;
+
+      for (let i = n - 3; i >= 0; i--) {
+        if (out[i].y !== oldY) break;
+        out[i].y = newY;
+      }
+    }
+  } else if (e0.y === e1.y) {
+    const dir = Math.sign(e1.x - e0.x);
+    const len = Math.abs(e1.x - e0.x);
+    if (dir !== 0 && len < minLeg) {
+      const oldX = e0.x;
+      const newX = e1.x - dir * minLeg;
+      out[n - 2].x = newX;
+
+      for (let i = n - 3; i >= 0; i--) {
+        if (out[i].x !== oldX) break;
+        out[i].x = newX;
+      }
+    }
+  }
+
+  return simplifyOrthogonal(out);
 }
 
 function normalizeWithPadding(
@@ -390,7 +469,7 @@ function orderErdNodes(tables: Table[], relations: Relation[]) {
 }
 
 async function buildErdLayout(
-  elk: ELK,
+  elk: InstanceType<typeof ELK>,
   tables: Table[],
   relations: Relation[],
   availableWidth: number,
@@ -409,7 +488,7 @@ async function buildErdLayout(
 
   const elkNodes = ordered.map((t) => {
     const d = (outDeg.get(t.name) ?? 0) + (inDeg.get(t.name) ?? 0);
-    const margin = d >= 10 ? 70 : d >= 6 ? 58 : 44;
+    const margin = d >= 10 ? 78 : d >= 6 ? 64 : 50;
 
     const node: any = {
       id: t.name,
@@ -439,6 +518,8 @@ async function buildErdLayout(
     targets: string[];
   }>;
 
+  const minSeg = layoutMode === "adaptive" ? "44" : "52";
+
   const graph: any = {
     id: "erdRoot",
     children: elkNodes,
@@ -448,20 +529,19 @@ async function buildErdLayout(
       "elk.direction": direction,
       "elk.edgeRouting": "ORTHOGONAL",
 
-      "elk.orthogonalRouting.minimumSegmentLength":
-        layoutMode === "adaptive" ? "34" : "40",
+      "elk.orthogonalRouting.minimumSegmentLength": minSeg,
       "elk.layered.unnecessaryBendpoints": "true",
 
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
 
-      "elk.spacing.nodeNode": layoutMode === "adaptive" ? "30" : "36",
+      "elk.spacing.nodeNode": layoutMode === "adaptive" ? "34" : "40",
       "elk.layered.spacing.nodeNodeBetweenLayers":
-        layoutMode === "adaptive" ? "88" : "108",
+        layoutMode === "adaptive" ? "96" : "118",
 
-      "elk.spacing.edgeEdge": layoutMode === "adaptive" ? "16" : "18",
-      "elk.spacing.edgeNode": layoutMode === "adaptive" ? "22" : "26",
+      "elk.spacing.edgeEdge": layoutMode === "adaptive" ? "22" : "26",
+      "elk.spacing.edgeNode": layoutMode === "adaptive" ? "30" : "36",
       "elk.layered.spacing.edgeEdgeBetweenLayers":
-        layoutMode === "adaptive" ? "18" : "22",
+        layoutMode === "adaptive" ? "24" : "30",
 
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
@@ -493,6 +573,8 @@ async function buildErdLayout(
     };
   }
 
+  const endpointLeg = layoutMode === "adaptive" ? 34 : 40;
+
   const routed: RoutedEdge[] = (out.edges ?? [])
     .map((e: any) => {
       const idx = Number(String(e.id).split(":")[1]);
@@ -504,6 +586,7 @@ async function buildErdLayout(
 
       pts = pts.slice().reverse();
       pts = simplifyOrthogonal(pts);
+      pts = ensureMinEndpointLegs(pts, endpointLeg);
 
       return { id: e.id, relation, points: pts } satisfies RoutedEdge;
     })

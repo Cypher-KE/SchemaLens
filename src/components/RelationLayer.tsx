@@ -22,15 +22,11 @@ type RelationLayerProps = {
 const ARROW_SIZE = 7;
 const ERD_MARKER = 16;
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
 function polylineD(points: Point[]) {
   return points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
 }
 
-function roundedOrthogonalD(points: Point[], radius = 12) {
+function roundedOrthogonalD(points: Point[], radius = 16) {
   const pts = points;
   if (pts.length < 2) return "";
 
@@ -51,6 +47,7 @@ function roundedOrthogonalD(points: Point[], radius = 12) {
     const isCorner =
       (sign(abx) !== 0 && sign(bcy) !== 0) ||
       (sign(aby) !== 0 && sign(bcx) !== 0);
+
     if (!isCorner) {
       d += ` L ${b.x} ${b.y}`;
       continue;
@@ -65,14 +62,8 @@ function roundedOrthogonalD(points: Point[], radius = 12) {
       continue;
     }
 
-    const p1 = {
-      x: b.x - sign(abx) * r,
-      y: b.y - sign(aby) * r,
-    };
-    const p2 = {
-      x: b.x + sign(bcx) * r,
-      y: b.y + sign(bcy) * r,
-    };
+    const p1 = { x: b.x - sign(abx) * r, y: b.y - sign(aby) * r };
+    const p2 = { x: b.x + sign(bcx) * r, y: b.y + sign(bcy) * r };
 
     d += ` L ${p1.x} ${p1.y}`;
     d += ` Q ${b.x} ${b.y} ${p2.x} ${p2.y}`;
@@ -399,7 +390,7 @@ export default function RelationLayer({
 
         const d =
           mode === "erd"
-            ? roundedOrthogonalD(r.points, 12)
+            ? roundedOrthogonalD(r.points, 16)
             : polylineD(r.points);
 
         const labelPoint = rel.label ? midPointAlongPolyline(r.points) : null;

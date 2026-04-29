@@ -107,6 +107,8 @@ export default function App() {
     [result.relations, filteredTableSet],
   );
 
+  const mode = (result.format ?? format) as DiagramFormat;
+
   useEffect(() => {
     let cancelled = false;
 
@@ -117,6 +119,7 @@ export default function App() {
           filteredRelations,
           {
             availableWidth: mainWidth - 64,
+            mode,
           },
         );
         if (cancelled) return;
@@ -155,9 +158,9 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [filteredTables, filteredRelations, mainWidth]);
+  }, [filteredTables, filteredRelations, mainWidth, mode]);
 
-  const parsedSummary = `${result.tables.length} tables • ${result.relations.length} relations • ${result.format ?? format}`;
+  const parsedSummary = `${result.tables.length} tables • ${result.relations.length} relations • ${mode}`;
 
   const visualize = () => {
     const trimmed = schemaText.trim();
@@ -222,7 +225,7 @@ export default function App() {
               }}
             >
               <RelationLayer
-                mode={result.format ?? format}
+                mode={mode}
                 tables={filteredTables}
                 layout={layout}
                 relations={filteredRelations}
@@ -241,7 +244,7 @@ export default function App() {
                       table={table}
                       layoutBox={box}
                       index={index}
-                      mode={result.format ?? format}
+                      mode={mode}
                       isActive={!activeTable || activeTable === table.name}
                       onToggleActive={() =>
                         setActiveTable((cur) =>

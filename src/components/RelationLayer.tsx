@@ -8,7 +8,7 @@ import type {
   Layout,
   Point,
 } from "../types";
-import { getColumnY, TABLE_WIDTH } from "../utils/schemaParser";
+import { getColumnY } from "../utils/schemaParser";
 
 type RelationLayerProps = {
   mode: DiagramFormat;
@@ -20,7 +20,68 @@ type RelationLayerProps = {
 };
 
 const ARROW_SIZE = 7;
-const ERD_MARKER = 18;
+const ERD_MARKER = 16;
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function polylineD(points: Point[]) {
+  return points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+}
+
+function roundedOrthogonalD(points: Point[], radius = 12) {
+  const pts = points;
+  if (pts.length < 2) return "";
+
+  const sign = (v: number) => (v === 0 ? 0 : v > 0 ? 1 : -1);
+
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const c = pts[i + 1];
+
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const bcx = c.x - b.x;
+    const bcy = c.y - b.y;
+
+    const isCorner =
+      (sign(abx) !== 0 && sign(bcy) !== 0) ||
+      (sign(aby) !== 0 && sign(bcx) !== 0);
+    if (!isCorner) {
+      d += ` L ${b.x} ${b.y}`;
+      continue;
+    }
+
+    const abLen = Math.hypot(abx, aby);
+    const bcLen = Math.hypot(bcx, bcy);
+
+    const r = Math.min(radius, abLen / 2, bcLen / 2);
+    if (r <= 0.5) {
+      d += ` L ${b.x} ${b.y}`;
+      continue;
+    }
+
+    const p1 = {
+      x: b.x - sign(abx) * r,
+      y: b.y - sign(aby) * r,
+    };
+    const p2 = {
+      x: b.x + sign(bcx) * r,
+      y: b.y + sign(bcy) * r,
+    };
+
+    d += ` L ${p1.x} ${p1.y}`;
+    d += ` Q ${b.x} ${b.y} ${p2.x} ${p2.y}`;
+  }
+
+  const last = pts[pts.length - 1];
+  d += ` L ${last.x} ${last.y}`;
+  return d;
+}
 
 function midPointAlongPolyline(points: Point[]): Point | null {
   if (points.length < 2) return null;
@@ -62,8 +123,8 @@ function buildFallbackRoutes(
   relations: Relation[],
 ): RoutedEdge[] {
   const tableByName = new Map(tables.map((t) => [t.name, t]));
-
   const out: RoutedEdge[] = [];
+
   relations.forEach((r, i) => {
     const fromT = tableByName.get(r.fromTable);
     const toT = tableByName.get(r.toTable);
@@ -71,31 +132,20 @@ function buildFallbackRoutes(
     const toB = layout[r.toTable];
     if (!fromT || !toT || !fromB || !toB) return;
 
-    const fromY = getColumnY(fromT, fromB, r.fromColumn);
-    const toY = getColumnY(toT, toB, r.toColumn);
+    const sx = fromB.x + fromB.width / 2;
+    const sy = getColumnY(fromT, fromB, r.fromColumn);
+    const tx = toB.x + toB.width / 2;
+    const ty = getColumnY(toT, toB, r.toColumn);
 
-    const fromIsLeft = fromB.x + fromB.width < toB.x;
-    const fromIsRight = toB.x + toB.width < fromB.x;
-
-    const sx = fromIsLeft
-      ? fromB.x + fromB.width
-      : fromIsRight
-        ? fromB.x
-        : fromB.x + fromB.width;
-    const tx = fromIsLeft ? toB.x : fromIsRight ? toB.x + toB.width : toB.x;
-
-    const sy = fromY;
-    const ty = toY;
-
-    const mx = (sx + tx) / 2;
+    const midY = (sy + ty) / 2;
 
     out.push({
       id: `fallback:${i}`,
       relation: r,
       points: [
         { x: sx, y: sy },
-        { x: mx, y: sy },
-        { x: mx, y: ty },
+        { x: sx, y: midY },
+        { x: tx, y: midY },
         { x: tx, y: ty },
       ],
     });
@@ -152,12 +202,12 @@ export default function RelationLayer({
               {c === "one" && (
                 <>
                   <path
-                    d="M4 3 L4 15"
+                    d="M4 3 L4 13"
                     stroke="context-stroke"
                     strokeWidth="1.8"
                   />
                   <path
-                    d="M7 3 L7 15"
+                    d="M7 3 L7 13"
                     stroke="context-stroke"
                     strokeWidth="1.8"
                   />
@@ -167,14 +217,14 @@ export default function RelationLayer({
                 <>
                   <circle
                     cx="6"
-                    cy="9"
-                    r="2.6"
+                    cy="8"
+                    r="2.5"
                     fill="none"
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d="M12 3 L12 15"
+                    d="M12 3 L12 13"
                     stroke="context-stroke"
                     strokeWidth="1.8"
                   />
@@ -183,22 +233,22 @@ export default function RelationLayer({
               {c === "oneOrMany" && (
                 <>
                   <path
-                    d="M6 3 L6 15"
+                    d="M6 3 L6 13"
                     stroke="context-stroke"
                     strokeWidth="1.8"
                   />
                   <path
-                    d="M0 9 L4 9"
+                    d="M0 8 L4 8"
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d="M0 9 L4 4"
+                    d="M0 8 L4 4"
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d="M0 9 L4 14"
+                    d="M0 8 L4 12"
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
@@ -208,24 +258,24 @@ export default function RelationLayer({
                 <>
                   <circle
                     cx="8"
-                    cy="9"
-                    r="2.6"
+                    cy="8"
+                    r="2.5"
                     fill="none"
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d="M0 9 L4 9"
+                    d="M0 8 L4 8"
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d="M0 9 L4 4"
+                    d="M0 8 L4 4"
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d="M0 9 L4 14"
+                    d="M0 8 L4 12"
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
@@ -251,12 +301,12 @@ export default function RelationLayer({
               {c === "one" && (
                 <>
                   <path
-                    d={`M${ERD_MARKER - 4} 3 L${ERD_MARKER - 4} 15`}
+                    d={`M${ERD_MARKER - 4} 3 L${ERD_MARKER - 4} 13`}
                     stroke="context-stroke"
                     strokeWidth="1.8"
                   />
                   <path
-                    d={`M${ERD_MARKER - 7} 3 L${ERD_MARKER - 7} 15`}
+                    d={`M${ERD_MARKER - 7} 3 L${ERD_MARKER - 7} 13`}
                     stroke="context-stroke"
                     strokeWidth="1.8"
                   />
@@ -267,13 +317,13 @@ export default function RelationLayer({
                   <circle
                     cx={ERD_MARKER - 6}
                     cy={ERD_MARKER / 2}
-                    r="2.6"
+                    r="2.5"
                     fill="none"
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d={`M${ERD_MARKER - 12} 3 L${ERD_MARKER - 12} 15`}
+                    d={`M${ERD_MARKER - 12} 3 L${ERD_MARKER - 12} 13`}
                     stroke="context-stroke"
                     strokeWidth="1.8"
                   />
@@ -282,22 +332,22 @@ export default function RelationLayer({
               {c === "oneOrMany" && (
                 <>
                   <path
-                    d={`M${ERD_MARKER - 6} 3 L${ERD_MARKER - 6} 15`}
+                    d={`M${ERD_MARKER - 6} 3 L${ERD_MARKER - 6} 13`}
                     stroke="context-stroke"
                     strokeWidth="1.8"
                   />
                   <path
-                    d={`${ERD_MARKER} 9 L${ERD_MARKER - 4} 9`}
+                    d={`${ERD_MARKER} 8 L${ERD_MARKER - 4} 8`}
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d={`${ERD_MARKER} 9 L${ERD_MARKER - 4} 4`}
+                    d={`${ERD_MARKER} 8 L${ERD_MARKER - 4} 4`}
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d={`${ERD_MARKER} 9 L${ERD_MARKER - 4} 14`}
+                    d={`${ERD_MARKER} 8 L${ERD_MARKER - 4} 12`}
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
@@ -308,23 +358,23 @@ export default function RelationLayer({
                   <circle
                     cx={ERD_MARKER - 8}
                     cy={ERD_MARKER / 2}
-                    r="2.6"
+                    r="2.5"
                     fill="none"
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d={`${ERD_MARKER} 9 L${ERD_MARKER - 4} 9`}
+                    d={`${ERD_MARKER} 8 L${ERD_MARKER - 4} 8`}
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d={`${ERD_MARKER} 9 L${ERD_MARKER - 4} 4`}
+                    d={`${ERD_MARKER} 8 L${ERD_MARKER - 4} 4`}
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
                   <path
-                    d={`${ERD_MARKER} 9 L${ERD_MARKER - 4} 14`}
+                    d={`${ERD_MARKER} 8 L${ERD_MARKER - 4} 12`}
                     stroke="context-stroke"
                     strokeWidth="1.6"
                   />
@@ -347,9 +397,10 @@ export default function RelationLayer({
           ? "hsl(var(--accent-2))"
           : "hsl(var(--muted-fg))";
 
-        const d = r.points
-          .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-          .join(" ");
+        const d =
+          mode === "erd"
+            ? roundedOrthogonalD(r.points, 12)
+            : polylineD(r.points);
 
         const labelPoint = rel.label ? midPointAlongPolyline(r.points) : null;
 
@@ -364,8 +415,10 @@ export default function RelationLayer({
               d={d}
               fill="none"
               stroke={stroke}
-              strokeWidth={isActive ? 1.9 : 1.05}
-              opacity={isActive ? 0.88 : 0.18}
+              strokeWidth={
+                mode === "erd" ? (isActive ? 1.45 : 1.0) : isActive ? 1.9 : 1.05
+              }
+              opacity={isActive ? (mode === "erd" ? 0.92 : 0.88) : 0.18}
               strokeLinecap="round"
               strokeLinejoin="round"
               markerEnd={
@@ -379,14 +432,17 @@ export default function RelationLayer({
                 mode === "erd" && mStart ? `url(#${mStart})` : undefined
               }
               initial={{ pathLength: 0, opacity: 0 }}
-              animate={{ pathLength: 1, opacity: isActive ? 0.88 : 0.18 }}
+              animate={{
+                pathLength: 1,
+                opacity: isActive ? (mode === "erd" ? 0.92 : 0.88) : 0.18,
+              }}
               transition={{ duration: 0.55, delay: index * 0.01 }}
             />
 
             {mode === "erd" && rel.label && labelPoint && (
               <text
                 x={labelPoint.x}
-                y={labelPoint.y - 6}
+                y={labelPoint.y - 8}
                 textAnchor="middle"
                 fontSize="11"
                 fill={stroke}

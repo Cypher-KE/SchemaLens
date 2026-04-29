@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import type { DiagramFormat } from "../types";
+import type { DiagramFormat, ErdLayoutMode } from "../types";
 
 type SidebarProps = {
   schemaText: string;
@@ -7,6 +7,9 @@ type SidebarProps = {
 
   format: DiagramFormat;
   setFormat: (val: DiagramFormat) => void;
+
+  erdLayout: ErdLayoutMode;
+  setErdLayout: (val: ErdLayoutMode) => void;
 
   search: string;
   setSearch: (val: string) => void;
@@ -29,6 +32,8 @@ export default function Sidebar({
   setSchemaText,
   format,
   setFormat,
+  erdLayout,
+  setErdLayout,
   search,
   setSearch,
   activeTable,
@@ -93,6 +98,34 @@ export default function Sidebar({
               </button>
             </div>
           </div>
+
+          {format === "erd" && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-medium text-slate-200">Layout</span>
+              <div className="inline-flex overflow-hidden rounded-lg border border-slate-700">
+                <button
+                  onClick={() => setErdLayout("hierarchical")}
+                  className={`px-3 py-1.5 text-xs font-semibold ${
+                    erdLayout === "hierarchical"
+                      ? "bg-slate-200 text-slate-950"
+                      : "bg-slate-950/40 text-slate-200"
+                  }`}
+                >
+                  Hierarchical
+                </button>
+                <button
+                  onClick={() => setErdLayout("adaptive")}
+                  className={`px-3 py-1.5 text-xs font-semibold ${
+                    erdLayout === "adaptive"
+                      ? "bg-slate-200 text-slate-950"
+                      : "bg-slate-950/40 text-slate-200"
+                  }`}
+                >
+                  Adaptive
+                </button>
+              </div>
+            </div>
+          )}
 
           <textarea
             id="schemaInput"

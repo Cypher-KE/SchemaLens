@@ -1,6 +1,7 @@
 import ELK from "elkjs/lib/elk.bundled.js";
 import type {
   DiagramFormat,
+  ErdLayoutMode,
   Layout,
   Relation,
   RoutedEdge,
@@ -101,7 +102,6 @@ function extendLeadWithoutExtraBends(
         if (out[i].x !== oldX) break;
         out[i].x = newX;
       }
-
       return simplifyOrthogonal(out);
     }
 
@@ -120,55 +120,52 @@ function extendLeadWithoutExtraBends(
         if (out[i].y !== oldY) break;
         out[i].y = newY;
       }
-
-      return simplifyOrthogonal(out);
-    }
-
-    return points;
-  } else {
-    const a = out[out.length - 2];
-    const b = out[out.length - 1];
-
-    if (n.x !== 0) {
-      if (a.y !== b.y) return points;
-      if (Math.sign(b.x - a.x) !== -Math.sign(n.x)) return points;
-
-      const len = Math.abs(b.x - a.x);
-      if (len >= minLead) return points;
-
-      const oldX = a.x;
-      const newX = b.x + n.x * minLead;
-
-      out[out.length - 2].x = newX;
-      for (let i = out.length - 3; i >= 0; i--) {
-        if (out[i].x !== oldX) break;
-        out[i].x = newX;
-      }
-
-      return simplifyOrthogonal(out);
-    }
-
-    if (n.y !== 0) {
-      if (a.x !== b.x) return points;
-      if (Math.sign(b.y - a.y) !== -Math.sign(n.y)) return points;
-
-      const len = Math.abs(b.y - a.y);
-      if (len >= minLead) return points;
-
-      const oldY = a.y;
-      const newY = b.y + n.y * minLead;
-
-      out[out.length - 2].y = newY;
-      for (let i = out.length - 3; i >= 0; i--) {
-        if (out[i].y !== oldY) break;
-        out[i].y = newY;
-      }
-
       return simplifyOrthogonal(out);
     }
 
     return points;
   }
+
+  const a = out[out.length - 2];
+  const b = out[out.length - 1];
+
+  if (n.x !== 0) {
+    if (a.y !== b.y) return points;
+    if (Math.sign(b.x - a.x) !== -Math.sign(n.x)) return points;
+
+    const len = Math.abs(b.x - a.x);
+    if (len >= minLead) return points;
+
+    const oldX = a.x;
+    const newX = b.x + n.x * minLead;
+
+    out[out.length - 2].x = newX;
+    for (let i = out.length - 3; i >= 0; i--) {
+      if (out[i].x !== oldX) break;
+      out[i].x = newX;
+    }
+    return simplifyOrthogonal(out);
+  }
+
+  if (n.y !== 0) {
+    if (a.x !== b.x) return points;
+    if (Math.sign(b.y - a.y) !== -Math.sign(n.y)) return points;
+
+    const len = Math.abs(b.y - a.y);
+    if (len >= minLead) return points;
+
+    const oldY = a.y;
+    const newY = b.y + n.y * minLead;
+
+    out[out.length - 2].y = newY;
+    for (let i = out.length - 3; i >= 0; i--) {
+      if (out[i].y !== oldY) break;
+      out[i].y = newY;
+    }
+    return simplifyOrthogonal(out);
+  }
+
+  return points;
 }
 
 function laneOrderFromOffset(laneOffset: number) {
@@ -189,26 +186,26 @@ function baseAlongForSideSql(table: Table, side: Side, columnName: string) {
   return TABLE_WIDTH / 2;
 }
 
-function baseAlongFromGeometry(args: {
-  selfSide: Side;
-  selfBox: { x: number; y: number; w: number; h: number };
-  otherCenter: { x: number; y: number };
-}) {
-  const { selfSide, selfBox, otherCenter } = args;
-  if (selfSide === "EAST" || selfSide === "WEST")
-    return otherCenter.y - selfBox.y;
-  return otherCenter.x - selfBox.x;
+function portCenterForSideSql(
+  table: Table,
+  side: Side,
+  columnName: string,
+): Point {
+  const h = getTableHeight(table);
+  if (side === "EAST")
+    return { x: TABLE_WIDTH, y: getColumnCenterY(table, columnName) };
+  if (side === "WEST") return { x: 0, y: getColumnCenterY(table, columnName) };
+  if (side === "SOUTH") return { x: TABLE_WIDTH / 2, y: h };
+  return { x: TABLE_WIDTH / 2, y: 0 };
 }
 
-function chooseChildSideErd(childCenter: Point, parentCenter: Point): Side {
+function chooseChildSideSql(childCenter: Point, parentCenter: Point): Side {
   const dx = parentCenter.x - childCenter.x;
   const dy = parentCenter.y - childCenter.y;
-
   const absX = Math.abs(dx);
   const absY = Math.abs(dy);
-
-  if (absY >= absX * 0.75) return dy < 0 ? "NORTH" : "SOUTH";
-  return dx > 0 ? "EAST" : "WEST";
+  if (absX >= absY) return dx > 0 ? "EAST" : "WEST";
+  return dy > 0 ? "SOUTH" : "NORTH";
 }
 
 function nudgeToMinGap(
@@ -249,7 +246,10 @@ function pointsFromElkEdge(e: any): Point[] | null {
     if (!sec?.startPoint || !sec?.endPoint) continue;
 
     const pts = [sec.startPoint, ...(sec.bendPoints ?? []), sec.endPoint].map(
-      (p: any) => ({ x: p.x, y: p.y }),
+      (p: any) => ({
+        x: p.x,
+        y: p.y,
+      }),
     ) as Point[];
 
     if (!pts.length) continue;
@@ -259,113 +259,278 @@ function pointsFromElkEdge(e: any): Point[] | null {
       const first = pts[0];
       if (last.x === first.x && last.y === first.y) out.push(...pts.slice(1));
       else out.push(...pts);
-    } else {
-      out.push(...pts);
-    }
+    } else out.push(...pts);
   }
 
   return out.length ? simplifyOrthogonal(out) : null;
 }
 
-function orderTablesForErd(tables: Table[], relations: Relation[]) {
+function normalizeWithPadding(
+  layout: Record<string, Layout>,
+  edges: RoutedEdge[],
+) {
+  let minX = Infinity;
+  let minY = Infinity;
+
+  for (const b of Object.values(layout)) {
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+  }
+  for (const ed of edges) {
+    for (const p of ed.points) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+    }
+  }
+
+  if (!Number.isFinite(minX)) minX = 0;
+  if (!Number.isFinite(minY)) minY = 0;
+
+  const shiftX = LAYOUT_PADDING - minX;
+  const shiftY = LAYOUT_PADDING - minY;
+
+  for (const k of Object.keys(layout)) {
+    layout[k] = {
+      ...layout[k],
+      x: layout[k].x + shiftX,
+      y: layout[k].y + shiftY,
+    };
+  }
+  for (const ed of edges) {
+    ed.points = ed.points.map((p) => ({ x: p.x + shiftX, y: p.y + shiftY }));
+  }
+
+  let maxX = 0;
+  let maxY = 0;
+
+  for (const b of Object.values(layout)) {
+    maxX = Math.max(maxX, b.x + b.width);
+    maxY = Math.max(maxY, b.y + b.height);
+  }
+  for (const ed of edges) {
+    for (const p of ed.points) {
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+  }
+
+  return {
+    width: Math.ceil(maxX + LAYOUT_PADDING),
+    height: Math.ceil(maxY + LAYOUT_PADDING),
+  };
+}
+
+function orderErdNodes(tables: Table[], relations: Relation[]) {
   const byName = new Map(tables.map((t) => [t.name, t]));
-  const children = new Map<string, Set<string>>();
   const outDeg = new Map<string, number>();
+  const inDeg = new Map<string, number>();
+  const undirected = new Map<string, Set<string>>();
 
   for (const t of tables) {
-    children.set(t.name, new Set());
     outDeg.set(t.name, 0);
+    inDeg.set(t.name, 0);
+    undirected.set(t.name, new Set());
   }
 
   for (const r of relations) {
     if (!byName.has(r.fromTable) || !byName.has(r.toTable)) continue;
     if (r.fromTable === r.toTable) continue;
 
-    const parent = r.toTable;
-    const child = r.fromTable;
+    outDeg.set(r.toTable, (outDeg.get(r.toTable) ?? 0) + 1);
+    inDeg.set(r.fromTable, (inDeg.get(r.fromTable) ?? 0) + 1);
 
-    children.get(parent)!.add(child);
-    outDeg.set(parent, (outDeg.get(parent) ?? 0) + 1);
+    undirected.get(r.fromTable)!.add(r.toTable);
+    undirected.get(r.toTable)!.add(r.fromTable);
   }
 
   let root = tables[0]?.name ?? "";
   let best = -1;
-  for (const [name, d] of outDeg.entries()) {
+  for (const [n, d] of outDeg.entries()) {
     if (d > best) {
       best = d;
-      root = name;
+      root = n;
     }
   }
 
-  const visited = new Set<string>();
-  const order: string[] = [];
   const q: string[] = root ? [root] : [];
+  const seen = new Set<string>();
+  const order: string[] = [];
 
   while (q.length) {
-    const n = q.shift()!;
-    if (visited.has(n)) continue;
-    visited.add(n);
-    order.push(n);
+    const cur = q.shift()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    order.push(cur);
 
-    const kids = Array.from(children.get(n) ?? []);
-    kids.sort(
-      (a, b) =>
-        (outDeg.get(b) ?? 0) - (outDeg.get(a) ?? 0) || a.localeCompare(b),
-    );
-    for (const k of kids) q.push(k);
+    const neighbors = Array.from(undirected.get(cur) ?? []);
+    neighbors.sort((a, b) => {
+      const da = (outDeg.get(a) ?? 0) + (inDeg.get(a) ?? 0);
+      const db = (outDeg.get(b) ?? 0) + (inDeg.get(b) ?? 0);
+      if (da !== db) return db - da;
+      return a.localeCompare(b);
+    });
+
+    for (const n of neighbors) q.push(n);
   }
 
   const remaining = tables
     .map((t) => t.name)
-    .filter((n) => !visited.has(n))
-    .sort(
-      (a, b) =>
-        (outDeg.get(b) ?? 0) - (outDeg.get(a) ?? 0) || a.localeCompare(b),
-    );
+    .filter((n) => !seen.has(n))
+    .sort((a, b) => {
+      const da = (outDeg.get(a) ?? 0) + (inDeg.get(a) ?? 0);
+      const db = (outDeg.get(b) ?? 0) + (inDeg.get(b) ?? 0);
+      if (da !== db) return db - da;
+      return a.localeCompare(b);
+    });
 
-  const final = [...order, ...remaining]
+  const finalOrder = [...order, ...remaining]
     .map((n) => byName.get(n)!)
     .filter(Boolean);
-
-  return { ordered: final, rootName: root };
+  return { ordered: finalOrder, rootName: root, inDeg, outDeg };
 }
 
-export async function buildOptimalLayoutElk(
+async function buildErdLayout(
+  elk: ELK,
   tables: Table[],
   relations: Relation[],
-  options?: { availableWidth?: number; mode?: DiagramFormat },
+  availableWidth: number,
+  layoutMode: ErdLayoutMode,
 ): Promise<BuildElkResult> {
-  const mode: DiagramFormat = options?.mode ?? "sql";
-  const elk = new ELK();
+  const { ordered, rootName, inDeg, outDeg } = orderErdNodes(tables, relations);
 
-  const availableWidth = Math.max(520, options?.availableWidth ?? 1200);
-  const targetWrapWidth = Math.max(
-    520,
-    Math.floor((availableWidth - LAYOUT_PADDING * 2) * 0.92),
-  );
+  const direction = layoutMode === "hierarchical" ? "DOWN" : "RIGHT";
 
+  const targetWrapWidth =
+    layoutMode === "adaptive"
+      ? Math.max(720, Math.floor((availableWidth - LAYOUT_PADDING * 2) * 0.98))
+      : Math.max(620, Math.floor((availableWidth - LAYOUT_PADDING * 2) * 0.84));
+
+  const wrapping = layoutMode === "adaptive" ? "MULTI_EDGE" : "SINGLE_EDGE";
+
+  const elkNodes = ordered.map((t) => {
+    const d = (outDeg.get(t.name) ?? 0) + (inDeg.get(t.name) ?? 0);
+    const margin = d >= 10 ? 70 : d >= 6 ? 58 : 44;
+
+    const node: any = {
+      id: t.name,
+      width: TABLE_WIDTH,
+      height: getTableHeight(t),
+      layoutOptions: {
+        "elk.margin": `[top=${margin},left=${margin},bottom=${margin},right=${margin}]`,
+      },
+    };
+
+    if ((inDeg.get(t.name) ?? 0) === 0)
+      node.layoutOptions["elk.layered.layering.layerConstraint"] = "FIRST";
+    if (t.name === rootName)
+      node.layoutOptions["elk.layered.layering.layerConstraint"] = "FIRST";
+
+    return node;
+  });
+
+  const elkEdges = relations
+    .map((r, i) => {
+      if (r.fromTable === r.toTable) return null;
+      return { id: `edge:${i}`, sources: [r.toTable], targets: [r.fromTable] };
+    })
+    .filter(Boolean) as Array<{
+    id: string;
+    sources: string[];
+    targets: string[];
+  }>;
+
+  const graph: any = {
+    id: "erdRoot",
+    children: elkNodes,
+    edges: elkEdges,
+    layoutOptions: {
+      "elk.algorithm": "layered",
+      "elk.direction": direction,
+      "elk.edgeRouting": "ORTHOGONAL",
+
+      "elk.orthogonalRouting.minimumSegmentLength":
+        layoutMode === "adaptive" ? "34" : "40",
+      "elk.layered.unnecessaryBendpoints": "true",
+
+      "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
+
+      "elk.spacing.nodeNode": layoutMode === "adaptive" ? "30" : "36",
+      "elk.layered.spacing.nodeNodeBetweenLayers":
+        layoutMode === "adaptive" ? "88" : "108",
+
+      "elk.spacing.edgeEdge": layoutMode === "adaptive" ? "16" : "18",
+      "elk.spacing.edgeNode": layoutMode === "adaptive" ? "22" : "26",
+      "elk.layered.spacing.edgeEdgeBetweenLayers":
+        layoutMode === "adaptive" ? "18" : "22",
+
+      "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+      "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
+      "elk.layered.cycleBreaking.strategy": "GREEDY",
+
+      "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
+      "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+      "elk.layered.nodePlacement.favorStraightEdges": "true",
+
+      "elk.layered.compaction.postCompaction.strategy": "EDGE_LENGTH",
+
+      "elk.layered.wrapping.strategy": wrapping,
+      "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
+
+      "elk.layered.mergeEdges": "false",
+      "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+    },
+  };
+
+  const out = await elk.layout(graph);
+
+  const layout: Record<string, Layout> = {};
+  for (const n of out.children ?? []) {
+    layout[n.id] = {
+      x: Math.round(n.x ?? 0),
+      y: Math.round(n.y ?? 0),
+      width: Math.round(n.width ?? TABLE_WIDTH),
+      height: Math.round(n.height ?? 0),
+    };
+  }
+
+  const routed: RoutedEdge[] = (out.edges ?? [])
+    .map((e: any) => {
+      const idx = Number(String(e.id).split(":")[1]);
+      const relation = relations[idx];
+      if (!relation) return null;
+
+      let pts = pointsFromElkEdge(e);
+      if (!pts) return null;
+
+      pts = pts.slice().reverse();
+      pts = simplifyOrthogonal(pts);
+
+      return { id: e.id, relation, points: pts } satisfies RoutedEdge;
+    })
+    .filter(Boolean);
+
+  const size = normalizeWithPadding(layout, routed);
+  return { layout, edges: routed, size };
+}
+
+async function buildSqlLayout(
+  elk: ELK,
+  tables: Table[],
+  relations: Relation[],
+  availableWidth: number,
+): Promise<BuildElkResult> {
   const tableByName = new Map(tables.map((t) => [t.name, t]));
-
   const portMeta = new Map<
     string,
     { laneOffset: number; laneCount: number; side: Side }
   >();
 
-  const direction = mode === "erd" ? "DOWN" : "RIGHT";
+  const targetWrapWidth = Math.max(
+    520,
+    Math.floor((availableWidth - LAYOUT_PADDING * 2) * 0.98),
+  );
 
-  const erdTight = mode === "erd";
-  const nodeNode = erdTight ? "38" : "28";
-  const betweenLayers = erdTight ? "112" : "86";
-  const edgeEdge = erdTight ? "18" : "14";
-  const edgeNode = erdTight ? "26" : "22";
-  const minSeg = erdTight ? "40" : "28";
-
-  const { ordered: nodeOrder, rootName } =
-    mode === "erd"
-      ? orderTablesForErd(tables, relations)
-      : { ordered: tables, rootName: "" };
-
-  const preNodes = nodeOrder.map((t) => ({
+  const preNodes = tables.map((t) => ({
     id: t.name,
     width: TABLE_WIDTH,
     height: getTableHeight(t),
@@ -385,20 +550,17 @@ export async function buildOptimalLayoutElk(
     edges: preEdges,
     layoutOptions: {
       "elk.algorithm": "layered",
-      "elk.direction": direction,
+      "elk.direction": "RIGHT",
       "elk.edgeRouting": "POLYLINE",
       "elk.layered.unnecessaryBendpoints": "true",
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
-      "elk.spacing.nodeNode": nodeNode,
-      "elk.layered.spacing.nodeNodeBetweenLayers": betweenLayers,
+      "elk.spacing.nodeNode": "28",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "84",
       "elk.layered.wrapping.strategy": "SINGLE_EDGE",
       "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
       "elk.layered.cycleBreaking.strategy": "GREEDY",
-      "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
-      "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
-      "elk.layered.nodePlacement.favorStraightEdges": "true",
     },
   };
 
@@ -446,44 +608,15 @@ export async function buildOptimalLayoutElk(
       y: parentB.y + parentB.h / 2,
     };
 
-    const childSide =
-      mode === "erd"
-        ? chooseChildSideErd(childCenter, parentCenter)
-        : (() => {
-            const dx = parentCenter.x - childCenter.x;
-            const dy = parentCenter.y - childCenter.y;
-            const absX = Math.abs(dx);
-            const absY = Math.abs(dy);
-            if (absX >= absY) return dx > 0 ? "EAST" : "WEST";
-            return dy > 0 ? "SOUTH" : "NORTH";
-          })();
-
+    const childSide = chooseChildSideSql(childCenter, parentCenter);
     const parentSide = oppositeSide(childSide);
-
-    const childBase =
-      mode === "erd"
-        ? baseAlongFromGeometry({
-            selfSide: childSide,
-            selfBox: childB,
-            otherCenter: parentCenter,
-          })
-        : baseAlongForSideSql(child, childSide, r.fromColumn);
-
-    const parentBase =
-      mode === "erd"
-        ? baseAlongFromGeometry({
-            selfSide: parentSide,
-            selfBox: parentB,
-            otherCenter: childCenter,
-          })
-        : baseAlongForSideSql(parent, parentSide, r.toColumn);
 
     endpoints.push({
       relIndex: i,
       tableName: r.fromTable,
       columnName: r.fromColumn,
       side: childSide,
-      baseAlong: childBase,
+      baseAlong: baseAlongForSideSql(child, childSide, r.fromColumn),
       portId: `port:child:${i}`,
       kind: "child",
     });
@@ -493,7 +626,7 @@ export async function buildOptimalLayoutElk(
       tableName: r.toTable,
       columnName: r.toColumn,
       side: parentSide,
-      baseAlong: parentBase,
+      baseAlong: baseAlongForSideSql(parent, parentSide, r.toColumn),
       portId: `port:parent:${i}`,
       kind: "parent",
     });
@@ -519,28 +652,14 @@ export async function buildOptimalLayoutElk(
     const spineIndex = Math.floor((group.length - 1) / 2);
 
     if (side === "EAST" || side === "WEST") {
-      const minY = 14;
-      const maxY = h - 14;
+      const minY = TABLE_HEADER_HEIGHT + TABLE_ROW_HEIGHT / 2;
+      const maxY = h - TABLE_ROW_HEIGHT / 2;
 
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxY - minY);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 8, 14);
 
-      const minGap = clamp(
-        Math.round(span / (group.length + 1)),
-        mode === "erd" ? 18 : 8,
-        mode === "erd" ? 34 : 14,
-      );
-
-      const baseMin = Math.min(...bases);
-      const baseMax = Math.max(...bases);
-      const baseRange = baseMax - baseMin;
-
-      const seeded =
-        group.length > 1 && baseRange < minGap * 0.2
-          ? bases.map((b, i) => b + (i - (group.length - 1) / 2) * minGap)
-          : bases;
-
-      const ys = nudgeToMinGap(seeded, minY, maxY, minGap);
+      const ys = nudgeToMinGap(bases, minY, maxY, minGap);
       const cx = side === "EAST" ? TABLE_WIDTH : 0;
 
       for (let i = 0; i < group.length; i++) {
@@ -558,23 +677,9 @@ export async function buildOptimalLayoutElk(
 
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxX - minX);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 10, 18);
 
-      const minGap = clamp(
-        Math.round(span / (group.length + 1)),
-        mode === "erd" ? 20 : 10,
-        mode === "erd" ? 42 : 18,
-      );
-
-      const baseMin = Math.min(...bases);
-      const baseMax = Math.max(...bases);
-      const baseRange = baseMax - baseMin;
-
-      const seeded =
-        group.length > 1 && baseRange < minGap * 0.2
-          ? bases.map((b, i) => b + (i - (group.length - 1) / 2) * minGap)
-          : bases;
-
-      const xs = nudgeToMinGap(seeded, minX, maxX, minGap);
+      const xs = nudgeToMinGap(bases, minX, maxX, minGap);
       const cy = side === "SOUTH" ? h : 0;
 
       for (let i = 0; i < group.length; i++) {
@@ -589,32 +694,16 @@ export async function buildOptimalLayoutElk(
     }
   }
 
-  const outDeg = new Map<string, number>();
-  const inDeg = new Map<string, number>();
-  for (const t of tables) {
-    outDeg.set(t.name, 0);
-    inDeg.set(t.name, 0);
-  }
+  const degree = new Map<string, number>();
+  for (const t of tables) degree.set(t.name, 0);
   for (const r of relations) {
-    outDeg.set(r.toTable, (outDeg.get(r.toTable) ?? 0) + 1);
-    inDeg.set(r.fromTable, (inDeg.get(r.fromTable) ?? 0) + 1);
+    degree.set(r.fromTable, (degree.get(r.fromTable) ?? 0) + 1);
+    degree.set(r.toTable, (degree.get(r.toTable) ?? 0) + 1);
   }
 
-  const elkNodes = nodeOrder.map((t) => {
-    const d = (outDeg.get(t.name) ?? 0) + (inDeg.get(t.name) ?? 0);
-
-    const margin =
-      mode === "erd"
-        ? d >= 10
-          ? 70
-          : d >= 6
-            ? 58
-            : 44
-        : d >= 10
-          ? 34
-          : d >= 6
-            ? 26
-            : 18;
+  const elkNodes = tables.map((t) => {
+    const d = degree.get(t.name) ?? 0;
+    const margin = d >= 10 ? 34 : d >= 6 ? 26 : 18;
 
     const ports = endpoints
       .filter((ep) => ep.tableName === t.name)
@@ -622,18 +711,20 @@ export async function buildOptimalLayoutElk(
         const c = portCenters.get(ep.portId);
         if (!c) return null;
 
+        const pc = portCenterForSideSql(t, c.side, ep.columnName);
+
         return {
           id: ep.portId,
           width: PORT_SIZE,
           height: PORT_SIZE,
-          x: c.x - PORT_SIZE / 2,
-          y: c.y - PORT_SIZE / 2,
+          x: pc.x - PORT_SIZE / 2,
+          y: pc.y - PORT_SIZE / 2,
           layoutOptions: { "elk.port.side": c.side },
         };
       })
       .filter(Boolean);
 
-    const node: any = {
+    return {
       id: t.name,
       width: TABLE_WIDTH,
       height: getTableHeight(t),
@@ -643,12 +734,6 @@ export async function buildOptimalLayoutElk(
         "elk.margin": `[top=${margin},left=${margin},bottom=${margin},right=${margin}]`,
       },
     };
-
-    if (mode === "erd" && t.name === rootName) {
-      node.layoutOptions["elk.layered.layering.layerConstraint"] = "FIRST";
-    }
-
-    return node;
   });
 
   const elkEdges = relations
@@ -673,16 +758,16 @@ export async function buildOptimalLayoutElk(
     edges: elkEdges,
     layoutOptions: {
       "elk.algorithm": "layered",
-      "elk.direction": direction,
+      "elk.direction": "RIGHT",
       "elk.edgeRouting": "ORTHOGONAL",
-      "elk.orthogonalRouting.minimumSegmentLength": minSeg,
       "elk.layered.unnecessaryBendpoints": "true",
+      "elk.orthogonalRouting.minimumSegmentLength": "28",
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
-      "elk.spacing.nodeNode": nodeNode,
-      "elk.layered.spacing.nodeNodeBetweenLayers": betweenLayers,
-      "elk.spacing.edgeEdge": edgeEdge,
-      "elk.spacing.edgeNode": edgeNode,
-      "elk.layered.spacing.edgeEdgeBetweenLayers": mode === "erd" ? "24" : "16",
+      "elk.spacing.nodeNode": "28",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "86",
+      "elk.spacing.edgeEdge": "14",
+      "elk.spacing.edgeNode": "22",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "16",
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
       "elk.layered.cycleBreaking.strategy": "GREEDY",
@@ -720,92 +805,64 @@ export async function buildOptimalLayoutElk(
       pts = pts.slice().reverse();
       pts = simplifyOrthogonal(pts);
 
-      if (mode === "sql") {
-        const sm = portMeta.get(`port:child:${idx}`);
-        const em = portMeta.get(`port:parent:${idx}`);
+      const sm = portMeta.get(`port:child:${idx}`);
+      const em = portMeta.get(`port:parent:${idx}`);
 
-        const BASE_LEAD = 26;
-        const STEP_LEAD = 10;
-        const MAX_LEAD = 86;
+      const BASE_LEAD = 26;
+      const STEP_LEAD = 10;
+      const MAX_LEAD = 86;
 
-        if (sm) {
-          const order = laneOrderFromOffset(sm.laneOffset);
-          const desiredLead = clamp(
-            BASE_LEAD + order * STEP_LEAD,
-            BASE_LEAD,
-            MAX_LEAD,
-          );
-          pts = extendLeadWithoutExtraBends(pts, sm.side, "start", desiredLead);
-        }
-
-        if (em) {
-          const order = laneOrderFromOffset(em.laneOffset);
-          const desiredLead = clamp(
-            BASE_LEAD + order * STEP_LEAD,
-            BASE_LEAD,
-            MAX_LEAD,
-          );
-          pts = extendLeadWithoutExtraBends(pts, em.side, "end", desiredLead);
-        }
-
-        pts = simplifyOrthogonal(pts);
+      if (sm) {
+        const order = laneOrderFromOffset(sm.laneOffset);
+        const desiredLead = clamp(
+          BASE_LEAD + order * STEP_LEAD,
+          BASE_LEAD,
+          MAX_LEAD,
+        );
+        pts = extendLeadWithoutExtraBends(pts, sm.side, "start", desiredLead);
       }
 
+      if (em) {
+        const order = laneOrderFromOffset(em.laneOffset);
+        const desiredLead = clamp(
+          BASE_LEAD + order * STEP_LEAD,
+          BASE_LEAD,
+          MAX_LEAD,
+        );
+        pts = extendLeadWithoutExtraBends(pts, em.side, "end", desiredLead);
+      }
+
+      pts = simplifyOrthogonal(pts);
       return { id: e.id, relation, points: pts } satisfies RoutedEdge;
     })
     .filter(Boolean);
 
-  let minX = Infinity;
-  let minY = Infinity;
+  const size = normalizeWithPadding(layout, routed);
+  return { layout, edges: routed, size };
+}
 
-  for (const b of Object.values(layout)) {
-    minX = Math.min(minX, b.x);
-    minY = Math.min(minY, b.y);
-  }
-  for (const ed of routed) {
-    for (const p of ed.points) {
-      minX = Math.min(minX, p.x);
-      minY = Math.min(minY, p.y);
-    }
-  }
+export async function buildOptimalLayoutElk(
+  tables: Table[],
+  relations: Relation[],
+  options?: {
+    availableWidth?: number;
+    mode?: DiagramFormat;
+    erdLayout?: ErdLayoutMode;
+  },
+): Promise<BuildElkResult> {
+  const elk = new ELK();
+  const mode: DiagramFormat = options?.mode ?? "sql";
+  const availableWidth = Math.max(520, options?.availableWidth ?? 1200);
 
-  if (!Number.isFinite(minX)) minX = 0;
-  if (!Number.isFinite(minY)) minY = 0;
-
-  const shiftX = LAYOUT_PADDING - minX;
-  const shiftY = LAYOUT_PADDING - minY;
-
-  for (const k of Object.keys(layout)) {
-    layout[k] = {
-      ...layout[k],
-      x: layout[k].x + shiftX,
-      y: layout[k].y + shiftY,
-    };
-  }
-  for (const ed of routed) {
-    ed.points = ed.points.map((p) => ({ x: p.x + shiftX, y: p.y + shiftY }));
+  if (mode === "erd") {
+    return buildErdLayout(
+      elk,
+      tables,
+      relations,
+      availableWidth,
+      options?.erdLayout ?? "hierarchical",
+    );
   }
 
-  let maxX = 0;
-  let maxY = 0;
-
-  for (const b of Object.values(layout)) {
-    maxX = Math.max(maxX, b.x + b.width);
-    maxY = Math.max(maxY, b.y + b.height);
-  }
-  for (const ed of routed) {
-    for (const p of ed.points) {
-      maxX = Math.max(maxX, p.x);
-      maxY = Math.max(maxY, p.y);
-    }
-  }
-
-  return {
-    layout,
-    edges: routed,
-    size: {
-      width: Math.ceil(maxX + LAYOUT_PADDING),
-      height: Math.ceil(maxY + LAYOUT_PADDING),
-    },
-  };
+  return buildSqlLayout(elk, tables, relations, availableWidth);
 }

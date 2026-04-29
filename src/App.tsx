@@ -2,7 +2,13 @@ import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "react";
 import { AnimatePresence } from "framer-motion";
 import { toPng } from "html-to-image";
 import { jsPDF } from "jspdf";
-import type { DiagramFormat, Layout, ParseResult, RoutedEdge } from "./types";
+import type {
+  DiagramFormat,
+  ErdLayoutMode,
+  Layout,
+  ParseResult,
+  RoutedEdge,
+} from "./types";
 import {
   parseSchema,
   buildLayout,
@@ -20,6 +26,8 @@ import TableCard from "./components/TableCard";
 
 export default function App() {
   const [format, setFormat] = useState<DiagramFormat>("sql");
+  const [erdLayout, setErdLayout] = useState<ErdLayoutMode>("hierarchical");
+
   const [schemaText, setSchemaText] = useState(SAMPLE_SCHEMA);
   const [search, setSearch] = useState("");
   const [activeTable, setActiveTable] = useState<string | null>(null);
@@ -38,9 +46,9 @@ export default function App() {
 
   useLayoutEffect(() => {
     if (!mainRef.current) return;
-    const ro = new ResizeObserver(([entry]) => {
-      setMainWidth(entry.contentRect.width);
-    });
+    const ro = new ResizeObserver(([entry]) =>
+      setMainWidth(entry.contentRect.width),
+    );
     ro.observe(mainRef.current);
     return () => ro.disconnect();
   }, []);
@@ -120,8 +128,10 @@ export default function App() {
           {
             availableWidth: mainWidth - 64,
             mode,
+            erdLayout,
           },
         );
+
         if (cancelled) return;
         setLayout(out.layout);
         setRoutes(out.edges);
@@ -158,9 +168,12 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [filteredTables, filteredRelations, mainWidth, mode]);
+  }, [filteredTables, filteredRelations, mainWidth, mode, erdLayout]);
 
-  const parsedSummary = `${result.tables.length} tables • ${result.relations.length} relations • ${mode}`;
+  const parsedSummary =
+    mode === "erd"
+      ? `${result.tables.length} tables • ${result.relations.length} relations • erd • ${erdLayout}`
+      : `${result.tables.length} tables • ${result.relations.length} relations • sql`;
 
   const visualize = () => {
     const trimmed = schemaText.trim();
@@ -187,6 +200,8 @@ export default function App() {
           setSchemaText={setSchemaText}
           format={format}
           setFormat={setFormat}
+          erdLayout={erdLayout}
+          setErdLayout={setErdLayout}
           search={search}
           setSearch={setSearch}
           activeTable={activeTable}

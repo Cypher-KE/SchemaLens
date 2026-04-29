@@ -1,4 +1,5 @@
 export type DiagramFormat = "sql" | "erd";
+export type ErdLayoutMode = "hierarchical" | "adaptive";
 
 export type Cardinality = "one" | "zeroOrOne" | "oneOrMany" | "zeroOrMany";
 

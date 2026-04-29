@@ -65,13 +65,6 @@ function oppositeSide(s: Side): Side {
   return "NORTH";
 }
 
-function sideNormal(s: Side): Point {
-  if (s === "EAST") return { x: 1, y: 0 };
-  if (s === "WEST") return { x: -1, y: 0 };
-  if (s === "SOUTH") return { x: 0, y: 1 };
-  return { x: 0, y: -1 };
-}
-
 function extendLeadWithoutExtraBends(
   points: Point[],
   side: Side,
@@ -80,168 +73,143 @@ function extendLeadWithoutExtraBends(
 ) {
   if (points.length < 2) return points;
 
-  const n = sideNormal(side);
   const out = points.map((p) => ({ ...p }));
 
   if (which === "start") {
     const a = out[0];
     const b = out[1];
 
-    if (n.x !== 0) {
-      if (a.y !== b.y) return points;
-      if (Math.sign(b.x - a.x) !== Math.sign(n.x)) return points;
-
+    if (a.y === b.y) {
+      const dir = Math.sign(b.x - a.x);
       const len = Math.abs(b.x - a.x);
-      if (len >= minLead) return points;
-
-      const oldX = b.x;
-      const newX = a.x + n.x * minLead;
-
-      out[1].x = newX;
-
-      for (let i = 2; i < out.length; i++) {
-        if (out[i].x !== oldX) break;
-        out[i].x = newX;
+      if (dir !== 0 && len < minLead) {
+        const oldX = b.x;
+        const newX = a.x + dir * minLead;
+        out[1].x = newX;
+        for (let i = 2; i < out.length; i++) {
+          if (out[i].x !== oldX) break;
+          out[i].x = newX;
+        }
+        return simplifyOrthogonal(out);
       }
-
-      return simplifyOrthogonal(out);
     }
 
-    if (n.y !== 0) {
-      if (a.x !== b.x) return points;
-      if (Math.sign(b.y - a.y) !== Math.sign(n.y)) return points;
-
+    if (a.x === b.x) {
+      const dir = Math.sign(b.y - a.y);
       const len = Math.abs(b.y - a.y);
-      if (len >= minLead) return points;
-
-      const oldY = b.y;
-      const newY = a.y + n.y * minLead;
-
-      out[1].y = newY;
-
-      for (let i = 2; i < out.length; i++) {
-        if (out[i].y !== oldY) break;
-        out[i].y = newY;
+      if (dir !== 0 && len < minLead) {
+        const oldY = b.y;
+        const newY = a.y + dir * minLead;
+        out[1].y = newY;
+        for (let i = 2; i < out.length; i++) {
+          if (out[i].y !== oldY) break;
+          out[i].y = newY;
+        }
+        return simplifyOrthogonal(out);
       }
+    }
 
-      return simplifyOrthogonal(out);
+    return points;
+  } else {
+    const a = out[out.length - 2];
+    const b = out[out.length - 1];
+
+    if (a.y === b.y) {
+      const dir = Math.sign(b.x - a.x);
+      const len = Math.abs(b.x - a.x);
+      if (dir !== 0 && len < minLead) {
+        const oldX = a.x;
+        const newX = b.x - dir * minLead;
+        out[out.length - 2].x = newX;
+        for (let i = out.length - 3; i >= 0; i--) {
+          if (out[i].x !== oldX) break;
+          out[i].x = newX;
+        }
+        return simplifyOrthogonal(out);
+      }
+    }
+
+    if (a.x === b.x) {
+      const dir = Math.sign(b.y - a.y);
+      const len = Math.abs(b.y - a.y);
+      if (dir !== 0 && len < minLead) {
+        const oldY = a.y;
+        const newY = b.y - dir * minLead;
+        out[out.length - 2].y = newY;
+        for (let i = out.length - 3; i >= 0; i--) {
+          if (out[i].y !== oldY) break;
+          out[i].y = newY;
+        }
+        return simplifyOrthogonal(out);
+      }
     }
 
     return points;
   }
+}
 
-  const a = out[out.length - 2];
-  const b = out[out.length - 1];
+function ensureMinEndpointLegs(points: Point[], minLeg: number) {
+  if (points.length < 2) return points;
+  const out = points.map((p) => ({ ...p }));
 
-  if (n.x !== 0) {
-    if (a.y !== b.y) return points;
-    if (Math.sign(b.x - a.x) !== -Math.sign(n.x)) return points;
-
-    const len = Math.abs(b.x - a.x);
-    if (len >= minLead) return points;
-
-    const oldX = a.x;
-    const newX = b.x + n.x * minLead;
-
-    out[out.length - 2].x = newX;
-
-    for (let i = out.length - 3; i >= 0; i--) {
-      if (out[i].x !== oldX) break;
-      out[i].x = newX;
+  const s0 = out[0];
+  const s1 = out[1];
+  if (s0.x === s1.x) {
+    const dir = Math.sign(s1.y - s0.y);
+    const len = Math.abs(s1.y - s0.y);
+    if (dir !== 0 && len < minLeg) {
+      const oldY = s1.y;
+      const newY = s0.y + dir * minLeg;
+      out[1].y = newY;
+      for (let i = 2; i < out.length; i++) {
+        if (out[i].y !== oldY) break;
+        out[i].y = newY;
+      }
     }
-
-    return simplifyOrthogonal(out);
-  }
-
-  if (n.y !== 0) {
-    if (a.x !== b.x) return points;
-    if (Math.sign(b.y - a.y) !== -Math.sign(n.y)) return points;
-
-    const len = Math.abs(b.y - a.y);
-    if (len >= minLead) return points;
-
-    const oldY = a.y;
-    const newY = b.y + n.y * minLead;
-
-    out[out.length - 2].y = newY;
-
-    for (let i = out.length - 3; i >= 0; i--) {
-      if (out[i].y !== oldY) break;
-      out[i].y = newY;
+  } else if (s0.y === s1.y) {
+    const dir = Math.sign(s1.x - s0.x);
+    const len = Math.abs(s1.x - s0.x);
+    if (dir !== 0 && len < minLeg) {
+      const oldX = s1.x;
+      const newX = s0.x + dir * minLeg;
+      out[1].x = newX;
+      for (let i = 2; i < out.length; i++) {
+        if (out[i].x !== oldX) break;
+        out[i].x = newX;
+      }
     }
-
-    return simplifyOrthogonal(out);
   }
 
-  return points;
-}
-
-function laneOrderFromOffset(laneOffset: number) {
-  if (laneOffset === 0) return 0;
-  const a = Math.abs(laneOffset);
-  return a * 2 + (laneOffset > 0 ? 1 : 0);
-}
-
-function getColumnCenterY(table: Table, columnName: string) {
-  const idx = table.columns.findIndex((c) => c.name === columnName);
-  const safe = idx >= 0 ? idx : 0;
-  return TABLE_HEADER_HEIGHT + safe * TABLE_ROW_HEIGHT + TABLE_ROW_HEIGHT / 2;
-}
-
-function baseAlongForSideSql(table: Table, side: Side, columnName: string) {
-  if (side === "EAST" || side === "WEST")
-    return getColumnCenterY(table, columnName);
-  return TABLE_WIDTH / 2;
-}
-
-function portCenterForSideSql(
-  table: Table,
-  side: Side,
-  columnName: string,
-): Point {
-  const h = getTableHeight(table);
-  if (side === "EAST")
-    return { x: TABLE_WIDTH, y: getColumnCenterY(table, columnName) };
-  if (side === "WEST") return { x: 0, y: getColumnCenterY(table, columnName) };
-  if (side === "SOUTH") return { x: TABLE_WIDTH / 2, y: h };
-  return { x: TABLE_WIDTH / 2, y: 0 };
-}
-
-function chooseChildSideSql(childCenter: Point, parentCenter: Point): Side {
-  const dx = parentCenter.x - childCenter.x;
-  const dy = parentCenter.y - childCenter.y;
-  const absX = Math.abs(dx);
-  const absY = Math.abs(dy);
-  if (absX >= absY) return dx > 0 ? "EAST" : "WEST";
-  return dy > 0 ? "SOUTH" : "NORTH";
-}
-
-function nudgeToMinGap(
-  bases: number[],
-  min: number,
-  max: number,
-  minGap: number,
-) {
-  const n = bases.length;
-  if (n === 0) return [];
-
-  const placed = bases.map((b) => clamp(b, min, max));
-
-  for (let i = 1; i < n; i++) {
-    if (placed[i] - placed[i - 1] < minGap) placed[i] = placed[i - 1] + minGap;
+  const n = out.length;
+  const e0 = out[n - 2];
+  const e1 = out[n - 1];
+  if (e0.x === e1.x) {
+    const dir = Math.sign(e1.y - e0.y);
+    const len = Math.abs(e1.y - e0.y);
+    if (dir !== 0 && len < minLeg) {
+      const oldY = e0.y;
+      const newY = e1.y - dir * minLeg;
+      out[n - 2].y = newY;
+      for (let i = n - 3; i >= 0; i--) {
+        if (out[i].y !== oldY) break;
+        out[i].y = newY;
+      }
+    }
+  } else if (e0.y === e1.y) {
+    const dir = Math.sign(e1.x - e0.x);
+    const len = Math.abs(e1.x - e0.x);
+    if (dir !== 0 && len < minLeg) {
+      const oldX = e0.x;
+      const newX = e1.x - dir * minLeg;
+      out[n - 2].x = newX;
+      for (let i = n - 3; i >= 0; i--) {
+        if (out[i].x !== oldX) break;
+        out[i].x = newX;
+      }
+    }
   }
 
-  const overflow = placed[n - 1] - max;
-  if (overflow > 0) for (let i = 0; i < n; i++) placed[i] -= overflow;
-
-  for (let i = n - 2; i >= 0; i--) {
-    if (placed[i + 1] - placed[i] < minGap) placed[i] = placed[i + 1] - minGap;
-  }
-
-  const underflow = min - placed[0];
-  if (underflow > 0) for (let i = 0; i < n; i++) placed[i] += underflow;
-
-  return placed.map((p) => clamp(p, min, max));
+  return simplifyOrthogonal(out);
 }
 
 function pointsFromElkEdge(e: any): Point[] | null {
@@ -254,10 +222,7 @@ function pointsFromElkEdge(e: any): Point[] | null {
     if (!sec?.startPoint || !sec?.endPoint) continue;
 
     const pts = [sec.startPoint, ...(sec.bendPoints ?? []), sec.endPoint].map(
-      (p: any) => ({
-        x: p.x,
-        y: p.y,
-      }),
+      (p: any) => ({ x: p.x, y: p.y }),
     ) as Point[];
 
     if (!pts.length) continue;
@@ -271,77 +236,6 @@ function pointsFromElkEdge(e: any): Point[] | null {
   }
 
   return out.length ? simplifyOrthogonal(out) : null;
-}
-
-function ensureMinEndpointLegs(points: Point[], minLeg: number) {
-  if (points.length < 2) return points;
-
-  const out = points.map((p) => ({ ...p }));
-
-  const s0 = out[0];
-  const s1 = out[1];
-
-  if (s0.x === s1.x) {
-    const dir = Math.sign(s1.y - s0.y);
-    const len = Math.abs(s1.y - s0.y);
-    if (dir !== 0 && len < minLeg) {
-      const oldY = s1.y;
-      const newY = s0.y + dir * minLeg;
-      out[1].y = newY;
-
-      for (let i = 2; i < out.length; i++) {
-        if (out[i].y !== oldY) break;
-        out[i].y = newY;
-      }
-    }
-  } else if (s0.y === s1.y) {
-    const dir = Math.sign(s1.x - s0.x);
-    const len = Math.abs(s1.x - s0.x);
-    if (dir !== 0 && len < minLeg) {
-      const oldX = s1.x;
-      const newX = s0.x + dir * minLeg;
-      out[1].x = newX;
-
-      for (let i = 2; i < out.length; i++) {
-        if (out[i].x !== oldX) break;
-        out[i].x = newX;
-      }
-    }
-  }
-
-  const n = out.length;
-  const e0 = out[n - 2];
-  const e1 = out[n - 1];
-
-  if (e0.x === e1.x) {
-    const dir = Math.sign(e1.y - e0.y);
-    const len = Math.abs(e1.y - e0.y);
-    if (dir !== 0 && len < minLeg) {
-      const oldY = e0.y;
-      const newY = e1.y - dir * minLeg;
-      out[n - 2].y = newY;
-
-      for (let i = n - 3; i >= 0; i--) {
-        if (out[i].y !== oldY) break;
-        out[i].y = newY;
-      }
-    }
-  } else if (e0.y === e1.y) {
-    const dir = Math.sign(e1.x - e0.x);
-    const len = Math.abs(e1.x - e0.x);
-    if (dir !== 0 && len < minLeg) {
-      const oldX = e0.x;
-      const newX = e1.x - dir * minLeg;
-      out[n - 2].x = newX;
-
-      for (let i = n - 3; i >= 0; i--) {
-        if (out[i].x !== oldX) break;
-        out[i].x = newX;
-      }
-    }
-  }
-
-  return simplifyOrthogonal(out);
 }
 
 function normalizeWithPadding(
@@ -468,33 +362,251 @@ function orderErdNodes(tables: Table[], relations: Relation[]) {
   return { ordered: finalOrder, rootName: root, inDeg, outDeg };
 }
 
+function nudgeToMinGap(
+  bases: number[],
+  min: number,
+  max: number,
+  minGap: number,
+) {
+  const n = bases.length;
+  if (n === 0) return [];
+
+  const placed = bases.map((b) => clamp(b, min, max));
+
+  for (let i = 1; i < n; i++) {
+    if (placed[i] - placed[i - 1] < minGap) placed[i] = placed[i - 1] + minGap;
+  }
+
+  const overflow = placed[n - 1] - max;
+  if (overflow > 0) for (let i = 0; i < n; i++) placed[i] -= overflow;
+
+  for (let i = n - 2; i >= 0; i--) {
+    if (placed[i + 1] - placed[i] < minGap) placed[i] = placed[i + 1] - minGap;
+  }
+
+  const underflow = min - placed[0];
+  if (underflow > 0) for (let i = 0; i < n; i++) placed[i] += underflow;
+
+  return placed.map((p) => clamp(p, min, max));
+}
+
 async function buildErdLayout(
-  elk: InstanceType<typeof ELK>,
+  elk: ELK,
   tables: Table[],
   relations: Relation[],
   availableWidth: number,
   layoutMode: ErdLayoutMode,
 ): Promise<BuildElkResult> {
   const { ordered, rootName, inDeg, outDeg } = orderErdNodes(tables, relations);
+  const tableByName = new Map(tables.map((t) => [t.name, t]));
 
   const direction = layoutMode === "hierarchical" ? "DOWN" : "RIGHT";
+  const preferHorizontal = direction === "RIGHT";
 
   const targetWrapWidth =
     layoutMode === "adaptive"
-      ? Math.max(720, Math.floor((availableWidth - LAYOUT_PADDING * 2) * 0.98))
-      : Math.max(620, Math.floor((availableWidth - LAYOUT_PADDING * 2) * 0.84));
+      ? Math.max(780, Math.floor((availableWidth - LAYOUT_PADDING * 2) * 0.98))
+      : Math.max(640, Math.floor((availableWidth - LAYOUT_PADDING * 2) * 0.84));
 
   const wrapping = layoutMode === "adaptive" ? "MULTI_EDGE" : "SINGLE_EDGE";
 
+  const nodeNode = layoutMode === "adaptive" ? "34" : "42";
+  const betweenLayers = layoutMode === "adaptive" ? "96" : "122";
+  const edgeEdge = layoutMode === "adaptive" ? "24" : "28";
+  const edgeNode = layoutMode === "adaptive" ? "40" : "48";
+  const minSeg = layoutMode === "adaptive" ? "44" : "54";
+  const endpointLeg = layoutMode === "adaptive" ? 36 : 44;
+
+  const preNodes = ordered.map((t) => ({
+    id: t.name,
+    width: TABLE_WIDTH,
+    height: getTableHeight(t),
+  }));
+
+  const preEdges = relations
+    .map((r, i) => {
+      if (!tableByName.has(r.fromTable) || !tableByName.has(r.toTable))
+        return null;
+      if (r.fromTable === r.toTable) return null;
+      return { id: `pre:${i}`, sources: [r.toTable], targets: [r.fromTable] };
+    })
+    .filter(Boolean);
+
+  const preGraph: any = {
+    id: "erdPre",
+    children: preNodes,
+    edges: preEdges,
+    layoutOptions: {
+      "elk.algorithm": "layered",
+      "elk.direction": direction,
+      "elk.edgeRouting": "POLYLINE",
+      "elk.layered.unnecessaryBendpoints": "true",
+
+      "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
+
+      "elk.spacing.nodeNode": nodeNode,
+      "elk.layered.spacing.nodeNodeBetweenLayers": betweenLayers,
+
+      "elk.layered.wrapping.strategy": wrapping,
+      "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
+
+      "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+      "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
+      "elk.layered.cycleBreaking.strategy": "GREEDY",
+
+      "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
+      "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+      "elk.layered.nodePlacement.favorStraightEdges": "true",
+
+      "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+    },
+  };
+
+  const preOut = await elk.layout(preGraph);
+
+  const preBox = new Map<
+    string,
+    { x: number; y: number; w: number; h: number }
+  >();
+  for (const n of preOut.children ?? []) {
+    preBox.set(n.id, {
+      x: n.x ?? 0,
+      y: n.y ?? 0,
+      w: n.width ?? TABLE_WIDTH,
+      h: n.height ?? 0,
+    });
+  }
+
+  type Endpoint = {
+    portId: string;
+    tableName: string;
+    side: Side;
+    baseAlong: number;
+  };
+
+  const endpoints: Endpoint[] = [];
+
+  relations.forEach((r, i) => {
+    const childB = preBox.get(r.fromTable);
+    const parentB = preBox.get(r.toTable);
+    if (!childB || !parentB) return;
+    if (r.fromTable === r.toTable) return;
+
+    const childCenter = {
+      x: childB.x + childB.w / 2,
+      y: childB.y + childB.h / 2,
+    };
+    const parentCenter = {
+      x: parentB.x + parentB.w / 2,
+      y: parentB.y + parentB.h / 2,
+    };
+
+    const parentSide: Side = preferHorizontal ? "EAST" : "SOUTH";
+    const childSide: Side = preferHorizontal ? "WEST" : "NORTH";
+
+    const baseAlongParent =
+      parentSide === "NORTH" || parentSide === "SOUTH"
+        ? parentCenter.x === parentCenter.x
+          ? parentCenter.x - parentB.x
+          : TABLE_WIDTH / 2
+        : parentCenter.y - parentB.y;
+
+    const baseAlongChild =
+      childSide === "NORTH" || childSide === "SOUTH"
+        ? childCenter.x - childB.x
+        : childCenter.y - childB.y;
+
+    endpoints.push({
+      portId: `erd:parent:${i}`,
+      tableName: r.toTable,
+      side: parentSide,
+      baseAlong: baseAlongParent,
+    });
+
+    endpoints.push({
+      portId: `erd:child:${i}`,
+      tableName: r.fromTable,
+      side: childSide,
+      baseAlong: baseAlongChild,
+    });
+  });
+
+  const endpointsByTableSide = new Map<string, Endpoint[]>();
+  for (const ep of endpoints) {
+    const key = `${ep.tableName}|${ep.side}`;
+    if (!endpointsByTableSide.has(key)) endpointsByTableSide.set(key, []);
+    endpointsByTableSide.get(key)!.push(ep);
+  }
+
+  const portCenters = new Map<string, { x: number; y: number; side: Side }>();
+
+  for (const [key, group] of endpointsByTableSide.entries()) {
+    group.sort((a, b) => a.baseAlong - b.baseAlong);
+
+    const [tableName, side] = key.split("|") as [string, Side];
+    const t = tableByName.get(tableName);
+    if (!t) continue;
+
+    const h = getTableHeight(t);
+
+    if (side === "NORTH" || side === "SOUTH") {
+      const minX = 24;
+      const maxX = TABLE_WIDTH - 24;
+
+      const bases = group.map((g) => g.baseAlong);
+      const span = Math.max(0, maxX - minX);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 22, 46);
+
+      const xs = nudgeToMinGap(bases, minX, maxX, minGap);
+      const y = side === "SOUTH" ? h : 0;
+
+      for (let i = 0; i < group.length; i++) {
+        portCenters.set(group[i].portId, { x: xs[i], y, side });
+      }
+    } else {
+      const minY = 18;
+      const maxY = h - 18;
+
+      const bases = group.map((g) => g.baseAlong);
+      const span = Math.max(0, maxY - minY);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 22, 46);
+
+      const ys = nudgeToMinGap(bases, minY, maxY, minGap);
+      const x = side === "EAST" ? TABLE_WIDTH : 0;
+
+      for (let i = 0; i < group.length; i++) {
+        portCenters.set(group[i].portId, { x, y: ys[i], side });
+      }
+    }
+  }
+
   const elkNodes = ordered.map((t) => {
-    const d = (outDeg.get(t.name) ?? 0) + (inDeg.get(t.name) ?? 0);
-    const margin = d >= 10 ? 78 : d >= 6 ? 64 : 50;
+    const deg = (outDeg.get(t.name) ?? 0) + (inDeg.get(t.name) ?? 0);
+    const margin = deg >= 10 ? 84 : deg >= 6 ? 70 : 56;
+
+    const ports = endpoints
+      .filter((ep) => ep.tableName === t.name)
+      .map((ep) => {
+        const c = portCenters.get(ep.portId);
+        if (!c) return null;
+        return {
+          id: ep.portId,
+          width: PORT_SIZE,
+          height: PORT_SIZE,
+          x: c.x - PORT_SIZE / 2,
+          y: c.y - PORT_SIZE / 2,
+          layoutOptions: { "elk.port.side": c.side },
+        };
+      })
+      .filter(Boolean);
 
     const node: any = {
       id: t.name,
       width: TABLE_WIDTH,
       height: getTableHeight(t),
+      ports,
       layoutOptions: {
+        "elk.portConstraints": "FIXED_POS",
         "elk.margin": `[top=${margin},left=${margin},bottom=${margin},right=${margin}]`,
       },
     };
@@ -510,15 +622,17 @@ async function buildErdLayout(
   const elkEdges = relations
     .map((r, i) => {
       if (r.fromTable === r.toTable) return null;
-      return { id: `edge:${i}`, sources: [r.toTable], targets: [r.fromTable] };
+      return {
+        id: `edge:${i}`,
+        sources: [`erd:parent:${i}`],
+        targets: [`erd:child:${i}`],
+      };
     })
     .filter(Boolean) as Array<{
     id: string;
     sources: string[];
     targets: string[];
   }>;
-
-  const minSeg = layoutMode === "adaptive" ? "44" : "52";
 
   const graph: any = {
     id: "erdRoot",
@@ -528,20 +642,18 @@ async function buildErdLayout(
       "elk.algorithm": "layered",
       "elk.direction": direction,
       "elk.edgeRouting": "ORTHOGONAL",
-
       "elk.orthogonalRouting.minimumSegmentLength": minSeg,
       "elk.layered.unnecessaryBendpoints": "true",
 
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
 
-      "elk.spacing.nodeNode": layoutMode === "adaptive" ? "34" : "40",
-      "elk.layered.spacing.nodeNodeBetweenLayers":
-        layoutMode === "adaptive" ? "96" : "118",
+      "elk.spacing.nodeNode": nodeNode,
+      "elk.layered.spacing.nodeNodeBetweenLayers": betweenLayers,
 
-      "elk.spacing.edgeEdge": layoutMode === "adaptive" ? "22" : "26",
-      "elk.spacing.edgeNode": layoutMode === "adaptive" ? "30" : "36",
+      "elk.spacing.edgeEdge": edgeEdge,
+      "elk.spacing.edgeNode": edgeNode,
       "elk.layered.spacing.edgeEdgeBetweenLayers":
-        layoutMode === "adaptive" ? "24" : "30",
+        layoutMode === "adaptive" ? "26" : "34",
 
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
@@ -573,8 +685,6 @@ async function buildErdLayout(
     };
   }
 
-  const endpointLeg = layoutMode === "adaptive" ? 34 : 40;
-
   const routed: RoutedEdge[] = (out.edges ?? [])
     .map((e: any) => {
       const idx = Number(String(e.id).split(":")[1]);
@@ -587,6 +697,19 @@ async function buildErdLayout(
       pts = pts.slice().reverse();
       pts = simplifyOrthogonal(pts);
       pts = ensureMinEndpointLegs(pts, endpointLeg);
+      pts = extendLeadWithoutExtraBends(
+        pts,
+        preferHorizontal ? "WEST" : "NORTH",
+        "start",
+        endpointLeg,
+      );
+      pts = extendLeadWithoutExtraBends(
+        pts,
+        preferHorizontal ? "EAST" : "SOUTH",
+        "end",
+        endpointLeg,
+      );
+      pts = simplifyOrthogonal(pts);
 
       return { id: e.id, relation, points: pts } satisfies RoutedEdge;
     })
@@ -836,7 +959,7 @@ async function buildSqlLayout(
   }>;
 
   const graph: any = {
-    id: "root",
+    id: "sqlRoot",
     children: elkNodes,
     edges: elkEdges,
     layoutOptions: {
@@ -888,12 +1011,12 @@ async function buildSqlLayout(
       pts = pts.slice().reverse();
       pts = simplifyOrthogonal(pts);
 
-      const sm = portMeta.get(`port:child:${idx}`);
-      const em = portMeta.get(`port:parent:${idx}`);
-
       const BASE_LEAD = 26;
       const STEP_LEAD = 10;
       const MAX_LEAD = 86;
+
+      const sm = portMeta.get(`port:child:${idx}`);
+      const em = portMeta.get(`port:parent:${idx}`);
 
       if (sm) {
         const order = laneOrderFromOffset(sm.laneOffset);

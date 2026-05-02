@@ -103,7 +103,7 @@ export async function buildErdLayout(
   const { ordered, rootName, inDeg, outDeg } = orderErdNodes(tables, relations);
   const tableByName = new Map(tables.map((t) => [t.name, t]));
 
-  const elkDirection = options.direction === "horizontal" ? "RIGHT" : "DOWN";
+  const elkDirection = options.direction === "vertical" ? "RIGHT" : "DOWN";
   const preferHorizontal = elkDirection === "RIGHT";
 
   const targetWrapWidth = Math.max(

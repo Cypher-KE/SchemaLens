@@ -15,6 +15,7 @@ import {
 } from "../schemaParser";
 import {
   clamp,
+  ensureMinEndpointLegs,
   extendLeadWithoutExtraBends,
   nudgeToMinGap,
   normalizeWithPadding,
@@ -53,8 +54,8 @@ function baseAlongForSideSql(table: Table, side: Side, columnName: string) {
     );
   }
 
-  const x = 24 + idx * 18;
-  return clamp(x, 18, TABLE_WIDTH - 18);
+  const x = 28 + idx * 18;
+  return clamp(x, 22, TABLE_WIDTH - 22);
 }
 
 function laneOrderFromOffset(laneOffset: number) {
@@ -80,7 +81,7 @@ export async function buildSqlLayout(
   const elkDirection = options.direction === "vertical" ? "DOWN" : "RIGHT";
 
   const targetWrapWidth = Math.max(
-    520,
+    560,
     Math.floor((options.availableWidth - LAYOUT_PADDING * 2) * 0.98),
   );
 
@@ -108,8 +109,8 @@ export async function buildSqlLayout(
       "elk.edgeRouting": "POLYLINE",
       "elk.layered.unnecessaryBendpoints": "true",
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
-      "elk.spacing.nodeNode": "28",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "84",
+      "elk.spacing.nodeNode": "44",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "132",
       "elk.layered.wrapping.strategy": "SINGLE_EDGE",
       "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
@@ -211,7 +212,7 @@ export async function buildSqlLayout(
 
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxY - minY);
-      const minGap = clamp(Math.round(span / (group.length + 1)), 8, 14);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 14, 24);
 
       const ys = nudgeToMinGap(bases, minY, maxY, minGap);
       const cx = side === "EAST" ? TABLE_WIDTH : 0;
@@ -226,12 +227,12 @@ export async function buildSqlLayout(
         });
       }
     } else {
-      const minX = 18;
-      const maxX = TABLE_WIDTH - 18;
+      const minX = 20;
+      const maxX = TABLE_WIDTH - 20;
 
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxX - minX);
-      const minGap = clamp(Math.round(span / (group.length + 1)), 10, 18);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 16, 30);
 
       const xs = nudgeToMinGap(bases, minX, maxX, minGap);
       const cy = side === "SOUTH" ? h : 0;
@@ -257,7 +258,7 @@ export async function buildSqlLayout(
 
   const elkNodes = tables.map((t) => {
     const d = degree.get(t.name) ?? 0;
-    const margin = d >= 10 ? 34 : d >= 6 ? 26 : 18;
+    const margin = d >= 10 ? 48 : d >= 6 ? 38 : 28;
 
     const ports = endpoints
       .filter((ep) => ep.tableName === t.name)
@@ -312,22 +313,29 @@ export async function buildSqlLayout(
       "elk.direction": elkDirection,
       "elk.edgeRouting": "ORTHOGONAL",
       "elk.layered.unnecessaryBendpoints": "true",
-      "elk.orthogonalRouting.minimumSegmentLength": "28",
+      "elk.orthogonalRouting.minimumSegmentLength": "44",
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
-      "elk.spacing.nodeNode": "28",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "86",
-      "elk.spacing.edgeEdge": "14",
-      "elk.spacing.edgeNode": "22",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": "16",
+
+      "elk.spacing.nodeNode": "44",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "138",
+
+      "elk.spacing.edgeEdge": "24",
+      "elk.spacing.edgeNode": "38",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "28",
+
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
       "elk.layered.cycleBreaking.strategy": "GREEDY",
+
       "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
       "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
       "elk.layered.nodePlacement.favorStraightEdges": "true",
+
       "elk.layered.compaction.postCompaction.strategy": "EDGE_LENGTH",
+
       "elk.layered.wrapping.strategy": "SINGLE_EDGE",
       "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
+
       "elk.layered.mergeEdges": "false",
     },
   };
@@ -356,9 +364,9 @@ export async function buildSqlLayout(
       pts = pts.slice().reverse();
       pts = simplifyOrthogonal(pts);
 
-      const BASE_LEAD = 26;
-      const STEP_LEAD = 10;
-      const MAX_LEAD = 86;
+      const BASE_LEAD = 44;
+      const STEP_LEAD = 16;
+      const MAX_LEAD = 160;
 
       const sm = portMeta.get(`port:child:${idx}`);
       const em = portMeta.get(`port:parent:${idx}`);
@@ -383,7 +391,9 @@ export async function buildSqlLayout(
         pts = extendLeadWithoutExtraBends(pts, "end", desiredLead);
       }
 
+      pts = ensureMinEndpointLegs(pts, 46);
       pts = simplifyOrthogonal(pts);
+
       return { id: e.id, relation, points: pts } satisfies RoutedEdge;
     })
     .filter(Boolean);

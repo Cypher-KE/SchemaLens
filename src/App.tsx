@@ -36,6 +36,27 @@ const clamp = (n: number, min: number, max: number) =>
   Math.max(min, Math.min(max, n));
 const DRAG_THRESHOLD = 4;
 
+const ZOOM_LEVELS = (() => {
+  const levels: number[] = [0.05];
+  for (let z = 0.25; z <= 8.0001; z += 0.25) levels.push(Number(z.toFixed(2)));
+  return levels;
+})();
+
+function nextZoomLevel(current: number, dir: -1 | 1) {
+  const eps = 1e-6;
+
+  if (dir > 0) {
+    for (const z of ZOOM_LEVELS) if (z > current + eps) return z;
+    return ZOOM_LEVELS[ZOOM_LEVELS.length - 1]!;
+  } else {
+    for (let i = ZOOM_LEVELS.length - 1; i >= 0; i--) {
+      const z = ZOOM_LEVELS[i]!;
+      if (z < current - eps) return z;
+    }
+    return ZOOM_LEVELS[0]!;
+  }
+}
+
 export default function App() {
   const [format, setFormat] = useState<DiagramFormat>("sql");
 
@@ -255,10 +276,16 @@ export default function App() {
     resetView();
   }, [canvasSize.width, canvasSize.height, resetView]);
 
-  const zoomAtClient = useCallback(
-    (clientX: number, clientY: number, factor: number) => {
+  const zoomToClient = useCallback(
+    (nextZoomRaw: number, clientX: number, clientY: number) => {
       const el = mainRef.current;
       if (!el) return;
+
+      const nextZoom = clamp(
+        nextZoomRaw,
+        ZOOM_LEVELS[0]!,
+        ZOOM_LEVELS[ZOOM_LEVELS.length - 1]!,
+      );
 
       const rect = el.getBoundingClientRect();
       const mx = clientX - rect.left;
@@ -266,8 +293,6 @@ export default function App() {
 
       const s = zoomRef.current;
       const p = panRef.current;
-
-      const nextZoom = clamp(s * factor, 0.05, 8); // more zoom-out + zoom-in headroom
 
       const wx = (mx - p.x) / s;
       const wy = (my - p.y) / s;
@@ -280,30 +305,51 @@ export default function App() {
     [setPanSafe, setZoomSafe],
   );
 
-  const zoomAtCenter = useCallback(
-    (factor: number) => {
+  const zoomStepAtClient = useCallback(
+    (dir: -1 | 1, clientX: number, clientY: number) => {
+      const cur = zoomRef.current;
+      const next = nextZoomLevel(cur, dir);
+      zoomToClient(next, clientX, clientY);
+    },
+    [zoomToClient],
+  );
+
+  const zoomStepAtCenter = useCallback(
+    (dir: -1 | 1) => {
       const el = mainRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
-      zoomAtClient(r.left + r.width / 2, r.top + r.height / 2, factor);
+      zoomStepAtClient(dir, r.left + r.width / 2, r.top + r.height / 2);
     },
-    [zoomAtClient],
+    [zoomStepAtClient],
   );
+
+  const wheelAccRef = useRef(0);
 
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
 
+    const THRESH = 60;
+
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const step = 1.085;
-      const factor = e.deltaY > 0 ? 1 / step : step;
-      zoomAtClient(e.clientX, e.clientY, factor);
+
+      wheelAccRef.current += e.deltaY;
+
+      while (wheelAccRef.current >= THRESH) {
+        zoomStepAtClient(-1, e.clientX, e.clientY);
+        wheelAccRef.current -= THRESH;
+      }
+      while (wheelAccRef.current <= -THRESH) {
+        zoomStepAtClient(1, e.clientX, e.clientY);
+        wheelAccRef.current += THRESH;
+      }
     };
 
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomAtClient]);
+  }, [zoomStepAtClient]);
 
   const [spaceDown, setSpaceDown] = useState(false);
   const spaceDownRef = useRef(false);
@@ -355,9 +401,7 @@ export default function App() {
   const onPointerDown = (e: React.PointerEvent) => {
     const forcePan = e.button === 1 || e.button === 2 || spaceDownRef.current;
 
-    if (forcePan) {
-      e.preventDefault();
-    }
+    if (forcePan) e.preventDefault();
 
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -367,7 +411,7 @@ export default function App() {
 
     dragRef.current = {
       active: true,
-      started: false,
+      started: forcePan,
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
@@ -376,10 +420,7 @@ export default function App() {
       forcePan,
     };
 
-    if (forcePan) {
-      dragRef.current.started = true;
-      setIsPanning(true);
-    }
+    if (forcePan) setIsPanning(true);
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -471,8 +512,8 @@ export default function App() {
         >
           <CanvasControls
             zoom={zoom}
-            onZoomIn={() => zoomAtCenter(1.12)}
-            onZoomOut={() => zoomAtCenter(1 / 1.12)}
+            onZoomIn={() => zoomStepAtCenter(1)}
+            onZoomOut={() => zoomStepAtCenter(-1)}
             onReset={resetView}
           />
 

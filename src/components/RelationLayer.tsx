@@ -19,7 +19,7 @@ type RelationLayerProps = {
   routes?: RoutedEdge[];
 };
 
-const ARROW_SIZE = 7;
+const ARROW_SIZE = 10;
 const ERD_MARKER = 16;
 
 function polylineD(points: Point[]) {
@@ -166,13 +166,13 @@ export default function RelationLayer({
           viewBox={`0 0 ${ARROW_SIZE} ${ARROW_SIZE}`}
           markerWidth={ARROW_SIZE}
           markerHeight={ARROW_SIZE}
-          refX={ARROW_SIZE - 0.5}
+          refX={ARROW_SIZE - 0.25}
           refY={ARROW_SIZE / 2}
           orient="auto"
           markerUnits="userSpaceOnUse"
         >
           <path
-            d={`M-1,0 L${ARROW_SIZE},${ARROW_SIZE / 2} L-1,${ARROW_SIZE} Z`}
+            d={`M0,0 L${ARROW_SIZE},${ARROW_SIZE / 2} L0,${ARROW_SIZE} Z`}
             fill="context-stroke"
           />
         </marker>
@@ -391,7 +391,7 @@ export default function RelationLayer({
         const d =
           mode === "erd"
             ? roundedOrthogonalD(r.points, 16)
-            : polylineD(r.points);
+            : roundedOrthogonalD(r.points, 12);
 
         const labelPoint = rel.label ? midPointAlongPolyline(r.points) : null;
 
@@ -407,9 +407,15 @@ export default function RelationLayer({
               fill="none"
               stroke={stroke}
               strokeWidth={
-                mode === "erd" ? (isActive ? 1.45 : 1.0) : isActive ? 1.9 : 1.05
+                mode === "erd"
+                  ? isActive
+                    ? 1.45
+                    : 1.0
+                  : isActive
+                    ? 2.05
+                    : 1.15
               }
-              opacity={isActive ? (mode === "erd" ? 0.92 : 0.88) : 0.18}
+              opacity={isActive ? (mode === "erd" ? 0.92 : 0.9) : 0.16}
               strokeLinecap="round"
               strokeLinejoin="round"
               markerEnd={
@@ -425,7 +431,7 @@ export default function RelationLayer({
               initial={{ pathLength: 0, opacity: 0 }}
               animate={{
                 pathLength: 1,
-                opacity: isActive ? (mode === "erd" ? 0.92 : 0.88) : 0.18,
+                opacity: isActive ? (mode === "erd" ? 0.92 : 0.9) : 0.16,
               }}
               transition={{ duration: 0.55, delay: index * 0.01 }}
             />

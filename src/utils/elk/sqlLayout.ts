@@ -149,20 +149,25 @@ function longHorizontalSegmentKeys(points: Point[], minLen = 160) {
   return keys;
 }
 
+function portGapForSpan(span: number, n: number) {
+  if (n <= 1) return 0;
+  const ideal = Math.floor(span / (n + 1));
+  return clamp(ideal, 10, 18);
+}
+
 function buildHorizontalCandidates(
   start: Point,
   end: Point,
   laneOffset: number,
-  preferBus: boolean,
 ) {
   const signX = Math.sign(end.x - start.x);
   if (signX === 0) return [];
 
-  const LANE_GAP = 46;
+  const LANE_GAP = 56;
   const off = clamp(laneOffset, -8, 8);
 
-  const baseLead = 36;
-  const lead = clamp(baseLead + Math.abs(off) * 10, 36, 140);
+  const baseLead = 40;
+  const lead = clamp(baseLead + Math.abs(off) * 10, 40, 180);
 
   const sLead = { x: start.x + signX * lead, y: start.y };
   const eLead = { x: end.x - signX * lead, y: end.y };
@@ -172,46 +177,46 @@ function buildHorizontalCandidates(
   const minY = Math.min(start.y, end.y);
   const maxY = Math.max(start.y, end.y);
 
-  const busNearEnd = end.y + laneY;
-  const busMid = (start.y + end.y) / 2 + laneY * 0.55;
-  const busAbove = minY - 120 + laneY;
-  const busBelow = maxY + 120 + laneY;
+  const midY = (start.y + end.y) / 2 + laneY * 0.75;
+  const aboveY = minY - 130 + laneY;
+  const belowY = maxY + 130 + laneY;
 
-  const busYs = [busNearEnd, busMid, busAbove, busBelow];
-
-  const zRoute = simplifyOrthogonal([
-    start,
-    sLead,
-    { x: eLead.x, y: sLead.y },
-    eLead,
-    end,
-  ]);
-  const buses = busYs.map((y) =>
+  return [
+    simplifyOrthogonal([start, sLead, { x: eLead.x, y: sLead.y }, eLead, end]),
     simplifyOrthogonal([
       start,
       sLead,
-      { x: sLead.x, y },
-      { x: eLead.x, y },
+      { x: sLead.x, y: midY },
+      { x: eLead.x, y: midY },
       eLead,
       end,
     ]),
-  );
-
-  return preferBus ? [...buses, zRoute] : [zRoute, ...buses];
+    simplifyOrthogonal([
+      start,
+      sLead,
+      { x: sLead.x, y: aboveY },
+      { x: eLead.x, y: aboveY },
+      eLead,
+      end,
+    ]),
+    simplifyOrthogonal([
+      start,
+      sLead,
+      { x: sLead.x, y: belowY },
+      { x: eLead.x, y: belowY },
+      eLead,
+      end,
+    ]),
+  ];
 }
 
 function bestHorizontalReroute(
   original: Point[],
   laneOffset: number,
   obstacles: Rect[],
-  preferBus: boolean,
   allowLongerFactor: number,
 ) {
   if (original.length < 2) return null;
-
-  const start = original[0]!;
-  const end = original[original.length - 1]!;
-  if (Math.sign(end.x - start.x) === 0) return null;
 
   const orig = {
     back: backtracksX(original),
@@ -220,12 +225,11 @@ function bestHorizontalReroute(
     bends: original.length,
   };
 
-  const candidates = buildHorizontalCandidates(
-    start,
-    end,
-    laneOffset,
-    preferBus,
-  );
+  const start = original[0]!;
+  const end = original[original.length - 1]!;
+  if (Math.sign(end.x - start.x) === 0) return null;
+
+  const candidates = buildHorizontalCandidates(start, end, laneOffset);
 
   let best: {
     pts: Point[];
@@ -249,7 +253,7 @@ function bestHorizontalReroute(
     if (orig.back === 0 && score.back !== 0) continue;
     if (orig.back > 0 && score.back > orig.back) continue;
 
-    if (score.bends > Math.max(orig.bends, 7)) continue;
+    if (score.bends > 7) continue;
     if (score.len > orig.len * allowLongerFactor) continue;
 
     if (!best) best = { pts, ...score };
@@ -324,10 +328,10 @@ export async function buildSqlLayout(
       "elk.edgeRouting": "POLYLINE",
       "elk.layered.unnecessaryBendpoints": "true",
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
-      "elk.spacing.nodeNode": "52",
+      "elk.spacing.nodeNode": "54",
       "elk.layered.spacing.nodeNodeBetweenLayers": preferHorizontal
-        ? "134"
-        : "162",
+        ? "140"
+        : "170",
       "elk.layered.wrapping.strategy": "SINGLE_EDGE",
       "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
@@ -430,7 +434,7 @@ export async function buildSqlLayout(
 
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxY - minY);
-      const minGap = clamp(Math.round(span / (group.length + 1)), 26, 44);
+      const minGap = portGapForSpan(span, group.length);
 
       const ys = nudgeToMinGap(bases, minY, maxY, minGap);
       const cx = side === "EAST" ? TABLE_WIDTH : 0;
@@ -450,7 +454,7 @@ export async function buildSqlLayout(
 
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxX - minX);
-      const minGap = clamp(Math.round(span / (group.length + 1)), 26, 44);
+      const minGap = portGapForSpan(span, group.length);
 
       const xs = nudgeToMinGap(bases, minX, maxX, minGap);
       const cy = side === "SOUTH" ? h : 0;
@@ -476,7 +480,7 @@ export async function buildSqlLayout(
 
   const elkNodes = tables.map((t) => {
     const d = degree.get(t.name) ?? 0;
-    const margin = d >= 10 ? 50 : d >= 6 ? 40 : 30;
+    const margin = d >= 12 ? 54 : d >= 8 ? 44 : d >= 5 ? 36 : 30;
 
     const ports = endpoints
       .filter((ep) => ep.tableName === t.name)
@@ -532,16 +536,16 @@ export async function buildSqlLayout(
       "elk.edgeRouting": "ORTHOGONAL",
       "elk.layered.unnecessaryBendpoints": "true",
       "elk.orthogonalRouting.minimumSegmentLength": preferHorizontal
-        ? "40"
-        : "56",
+        ? "44"
+        : "58",
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
-      "elk.spacing.nodeNode": "52",
+      "elk.spacing.nodeNode": "54",
       "elk.layered.spacing.nodeNodeBetweenLayers": preferHorizontal
-        ? "136"
-        : "166",
-      "elk.spacing.edgeEdge": "28",
-      "elk.spacing.edgeNode": "44",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": "32",
+        ? "146"
+        : "176",
+      "elk.spacing.edgeEdge": "30",
+      "elk.spacing.edgeNode": "48",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "34",
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
       "elk.layered.cycleBreaking.strategy": "GREEDY",
@@ -589,9 +593,9 @@ export async function buildSqlLayout(
       pts = pts.slice().reverse();
       pts = simplifyOrthogonal(pts);
 
-      const BASE_LEAD = 34;
-      const STEP_LEAD = 12;
-      const MAX_LEAD = 170;
+      const BASE_LEAD = 38;
+      const STEP_LEAD = 14;
+      const MAX_LEAD = 200;
 
       const sm = portMeta.get(`port:child:${relIndex}`);
       const em = portMeta.get(`port:parent:${relIndex}`);
@@ -613,7 +617,7 @@ export async function buildSqlLayout(
         pts = extendLeadWithoutExtraBends(pts, em.side, "end", desired);
       }
 
-      pts = ensureMinEndpointLegs(pts, preferHorizontal ? 40 : 54);
+      pts = ensureMinEndpointLegs(pts, preferHorizontal ? 44 : 58);
       pts = simplifyOrthogonal(pts);
 
       return { id: e.id, relation, points: pts, relIndex };
@@ -629,10 +633,12 @@ export async function buildSqlLayout(
     }
   }
 
-  // Lane offsets per target+side, sorted by target port Y to avoid crossings near the target
   const laneOffsetByRelIndex = new Map<number, number>();
+  const heavyGroupRel = new Set<number>();
+
   if (options.direction === "horizontal") {
     const groups = new Map<string, number[]>();
+
     for (const ed of rawEdgesWithIndex) {
       const relIndex = ed.relIndex;
       const to = ed.relation.toTable;
@@ -649,6 +655,9 @@ export async function buildSqlLayout(
         const yb = portCenters.get(`port:parent:${b}`)?.y ?? 0;
         return ya - yb || a - b;
       });
+
+      if (list.length >= 4) for (const i of list) heavyGroupRel.add(i);
+
       const mid = Math.floor((list.length - 1) / 2);
       for (let i = 0; i < list.length; i++)
         laneOffsetByRelIndex.set(list[i]!, i - mid);
@@ -668,17 +677,18 @@ export async function buildSqlLayout(
         (k) => (segCounts.get(k) ?? 0) > 1,
       );
 
-      if (!back && !overlap)
+      const heavy = heavyGroupRel.has(ed.relIndex);
+
+      if (!heavy && !back && !overlap)
         return { id: ed.id, relation: ed.relation, points: ed.points };
 
       const laneOffset = laneOffsetByRelIndex.get(ed.relIndex) ?? 0;
-      const allowLonger = overlap ? 1.55 : 1.28;
+      const allowLonger = heavy ? 1.65 : overlap ? 1.55 : 1.28;
 
       const cand = bestHorizontalReroute(
         ed.points,
         laneOffset,
         obstacles,
-        true,
         allowLonger,
       );
 

@@ -5,6 +5,7 @@ import type {
   Relation,
   RoutedEdge,
   Table,
+  Point,
 } from "../../types";
 import {
   getTableHeight,
@@ -15,8 +16,8 @@ import {
 } from "../schemaParser";
 import {
   clamp,
-  ensureMinEndpointLegs,
   extendLeadWithoutExtraBends,
+  ensureMinEndpointLegs,
   nudgeToMinGap,
   normalizeWithPadding,
   oppositeSide,
@@ -27,6 +28,75 @@ import {
 
 const PORT_SIZE = 2;
 
+type Rect = { x: number; y: number; width: number; height: number };
+
+function inflateRect(r: Rect, pad: number): Rect {
+  return {
+    x: r.x - pad,
+    y: r.y - pad,
+    width: r.width + pad * 2,
+    height: r.height + pad * 2,
+  };
+}
+
+function segmentIntersectsRect(a: Point, b: Point, r: Rect) {
+  if (a.x === b.x) {
+    const x = a.x;
+    if (x < r.x || x > r.x + r.width) return false;
+    const y0 = Math.min(a.y, b.y);
+    const y1 = Math.max(a.y, b.y);
+    return !(y1 < r.y || y0 > r.y + r.height);
+  }
+  if (a.y === b.y) {
+    const y = a.y;
+    if (y < r.y || y > r.y + r.height) return false;
+    const x0 = Math.min(a.x, b.x);
+    const x1 = Math.max(a.x, b.x);
+    return !(x1 < r.x || x0 > r.x + r.width);
+  }
+  return false;
+}
+
+function pathLength(points: Point[]) {
+  let len = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    len += Math.hypot(
+      points[i + 1].x - points[i].x,
+      points[i + 1].y - points[i].y,
+    );
+  }
+  return len;
+}
+
+function intersectionHits(points: Point[], obstacles: Rect[]) {
+  let hits = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i]!;
+    const b = points[i + 1]!;
+    for (const r of obstacles) if (segmentIntersectsRect(a, b, r)) hits++;
+  }
+  return hits;
+}
+
+function backtracksX(points: Point[]) {
+  if (points.length < 2) return 0;
+  const start = points[0]!;
+  const end = points[points.length - 1]!;
+  const sign = Math.sign(end.x - start.x);
+  if (sign === 0) return 0;
+
+  let back = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i]!;
+    const b = points[i + 1]!;
+    if (a.y !== b.y) continue;
+    const dx = b.x - a.x;
+    const s = Math.sign(dx);
+    if (s !== 0 && s !== sign) back++;
+  }
+  return back;
+}
+
 function chooseChildSideSql(
   child: { x: number; y: number },
   parent: { x: number; y: number },
@@ -34,7 +104,6 @@ function chooseChildSideSql(
 ): Side {
   const dx = parent.x - child.x;
   const dy = parent.y - child.y;
-
   if (preferHorizontal) return dx >= 0 ? "EAST" : "WEST";
   return dy >= 0 ? "SOUTH" : "NORTH";
 }
@@ -56,83 +125,155 @@ function baseAlongForSideSql(table: Table, side: Side, columnName: string) {
     );
   }
 
-  const x = 28 + idx * 18;
-  return clamp(x, 22, TABLE_WIDTH - 22);
+  const x = 18 + idx * 18;
+  return clamp(x, 18, TABLE_WIDTH - 18);
 }
 
-function laneOrderFromOffset(laneOffset: number) {
-  return Math.abs(laneOffset);
+function quant(v: number, q = 10) {
+  return Math.round(v / q) * q;
 }
 
-function fanOutEndpoint(
-  points: { x: number; y: number }[],
-  which: "start" | "end",
-  meta: { laneOffset: number; side: Side } | undefined,
-  enabled: boolean,
+function longHorizontalSegmentKeys(points: Point[], minLen = 160) {
+  const keys: string[] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i]!;
+    const b = points[i + 1]!;
+    if (a.y !== b.y) continue;
+
+    const x0 = Math.min(a.x, b.x);
+    const x1 = Math.max(a.x, b.x);
+    if (x1 - x0 < minLen) continue;
+
+    keys.push(`H|${quant(a.y, 10)}|${quant(x0, 20)}|${quant(x1, 20)}`);
+  }
+  return keys;
+}
+
+function buildHorizontalCandidates(
+  start: Point,
+  end: Point,
+  laneOffset: number,
+  preferBus: boolean,
 ) {
-  if (!enabled || !meta) return points;
+  const signX = Math.sign(end.x - start.x);
+  if (signX === 0) return [];
 
-  const off = clamp(meta.laneOffset, -4, 4);
-  if (off === 0) return points;
+  const LANE_GAP = 46;
+  const off = clamp(laneOffset, -8, 8);
 
-  const step = 14;
-  const delta = off * step;
+  const baseLead = 36;
+  const lead = clamp(baseLead + Math.abs(off) * 10, 36, 140);
 
-  const pts = points.map((p) => ({ ...p }));
-  if (pts.length < 2) return pts;
+  const sLead = { x: start.x + signX * lead, y: start.y };
+  const eLead = { x: end.x - signX * lead, y: end.y };
 
-  if (which === "start") {
-    const p0 = pts[0];
-    const p1 = pts[1];
+  const laneY = off * LANE_GAP;
 
-    if (p0.x === p1.x && (meta.side === "NORTH" || meta.side === "SOUTH")) {
-      const x = p0.x + delta;
-      return simplifyOrthogonal([
-        p0,
-        { x, y: p0.y },
-        { x, y: p1.y },
-        ...pts.slice(1),
-      ]);
+  const minY = Math.min(start.y, end.y);
+  const maxY = Math.max(start.y, end.y);
+
+  const busNearEnd = end.y + laneY;
+  const busMid = (start.y + end.y) / 2 + laneY * 0.55;
+  const busAbove = minY - 120 + laneY;
+  const busBelow = maxY + 120 + laneY;
+
+  const busYs = [busNearEnd, busMid, busAbove, busBelow];
+
+  const zRoute = simplifyOrthogonal([
+    start,
+    sLead,
+    { x: eLead.x, y: sLead.y },
+    eLead,
+    end,
+  ]);
+  const buses = busYs.map((y) =>
+    simplifyOrthogonal([
+      start,
+      sLead,
+      { x: sLead.x, y },
+      { x: eLead.x, y },
+      eLead,
+      end,
+    ]),
+  );
+
+  return preferBus ? [...buses, zRoute] : [zRoute, ...buses];
+}
+
+function bestHorizontalReroute(
+  original: Point[],
+  laneOffset: number,
+  obstacles: Rect[],
+  preferBus: boolean,
+  allowLongerFactor: number,
+) {
+  if (original.length < 2) return null;
+
+  const start = original[0]!;
+  const end = original[original.length - 1]!;
+  if (Math.sign(end.x - start.x) === 0) return null;
+
+  const orig = {
+    back: backtracksX(original),
+    hits: intersectionHits(original, obstacles),
+    len: pathLength(original),
+    bends: original.length,
+  };
+
+  const candidates = buildHorizontalCandidates(
+    start,
+    end,
+    laneOffset,
+    preferBus,
+  );
+
+  let best: {
+    pts: Point[];
+    back: number;
+    hits: number;
+    len: number;
+    bends: number;
+  } | null = null;
+
+  for (const pts0 of candidates) {
+    const pts = simplifyOrthogonal(pts0);
+
+    const score = {
+      back: backtracksX(pts),
+      hits: intersectionHits(pts, obstacles),
+      len: pathLength(pts),
+      bends: pts.length,
+    };
+
+    if (score.hits > orig.hits) continue;
+    if (orig.back === 0 && score.back !== 0) continue;
+    if (orig.back > 0 && score.back > orig.back) continue;
+
+    if (score.bends > Math.max(orig.bends, 7)) continue;
+    if (score.len > orig.len * allowLongerFactor) continue;
+
+    if (!best) best = { pts, ...score };
+    else {
+      if (score.hits < best.hits) best = { pts, ...score };
+      else if (score.hits === best.hits && score.back < best.back)
+        best = { pts, ...score };
+      else if (
+        score.hits === best.hits &&
+        score.back === best.back &&
+        score.bends < best.bends
+      )
+        best = { pts, ...score };
+      else if (
+        score.hits === best.hits &&
+        score.back === best.back &&
+        score.bends === best.bends &&
+        score.len < best.len
+      )
+        best = { pts, ...score };
     }
-
-    if (p0.y === p1.y && (meta.side === "EAST" || meta.side === "WEST")) {
-      const y = p0.y + delta;
-      return simplifyOrthogonal([
-        p0,
-        { x: p0.x, y },
-        { x: p1.x, y },
-        ...pts.slice(1),
-      ]);
-    }
-
-    return pts;
   }
 
-  const n = pts.length;
-  const p0 = pts[n - 2];
-  const p1 = pts[n - 1];
-
-  if (p0.x === p1.x && (meta.side === "NORTH" || meta.side === "SOUTH")) {
-    const x = p1.x + delta;
-    return simplifyOrthogonal([
-      ...pts.slice(0, n - 1),
-      { x, y: p0.y },
-      { x, y: p1.y },
-      p1,
-    ]);
-  }
-
-  if (p0.y === p1.y && (meta.side === "EAST" || meta.side === "WEST")) {
-    const y = p1.y + delta;
-    return simplifyOrthogonal([
-      ...pts.slice(0, n - 1),
-      { x: p0.x, y },
-      { x: p1.x, y },
-      p1,
-    ]);
-  }
-
-  return pts;
+  return best?.pts ?? null;
 }
 
 export async function buildSqlLayout(
@@ -153,7 +294,6 @@ export async function buildSqlLayout(
 
   const elkDirection = options.direction === "vertical" ? "DOWN" : "RIGHT";
   const preferHorizontal = elkDirection === "RIGHT";
-  const enableFanOut = !preferHorizontal;
 
   const targetWrapWidth = Math.max(
     560,
@@ -184,10 +324,10 @@ export async function buildSqlLayout(
       "elk.edgeRouting": "POLYLINE",
       "elk.layered.unnecessaryBendpoints": "true",
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
-      "elk.spacing.nodeNode": "48",
+      "elk.spacing.nodeNode": "52",
       "elk.layered.spacing.nodeNodeBetweenLayers": preferHorizontal
-        ? "120"
-        : "140",
+        ? "134"
+        : "162",
       "elk.layered.wrapping.strategy": "SINGLE_EDGE",
       "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
@@ -217,7 +357,6 @@ export async function buildSqlLayout(
     columnName: string;
     side: Side;
     portId: string;
-    kind: "child" | "parent";
     baseAlong: number;
   };
 
@@ -254,7 +393,6 @@ export async function buildSqlLayout(
       side: childSide,
       baseAlong: baseAlongForSideSql(child, childSide, r.fromColumn),
       portId: `port:child:${i}`,
-      kind: "child",
     });
 
     endpoints.push({
@@ -264,7 +402,6 @@ export async function buildSqlLayout(
       side: parentSide,
       baseAlong: baseAlongForSideSql(parent, parentSide, r.toColumn),
       portId: `port:parent:${i}`,
-      kind: "parent",
     });
   });
 
@@ -293,14 +430,14 @@ export async function buildSqlLayout(
 
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxY - minY);
-      const minGap = clamp(Math.round(span / (group.length + 1)), 16, 26);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 26, 44);
 
       const ys = nudgeToMinGap(bases, minY, maxY, minGap);
       const cx = side === "EAST" ? TABLE_WIDTH : 0;
 
       for (let i = 0; i < group.length; i++) {
-        const ep = group[i];
-        portCenters.set(ep.portId, { x: cx, y: ys[i], side });
+        const ep = group[i]!;
+        portCenters.set(ep.portId, { x: cx, y: ys[i]!, side });
         portMeta.set(ep.portId, {
           laneOffset: i - spineIndex,
           laneCount: group.length,
@@ -308,19 +445,19 @@ export async function buildSqlLayout(
         });
       }
     } else {
-      const minX = 20;
-      const maxX = TABLE_WIDTH - 20;
+      const minX = 18;
+      const maxX = TABLE_WIDTH - 18;
 
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxX - minX);
-      const minGap = clamp(Math.round(span / (group.length + 1)), 18, 34);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 26, 44);
 
       const xs = nudgeToMinGap(bases, minX, maxX, minGap);
       const cy = side === "SOUTH" ? h : 0;
 
       for (let i = 0; i < group.length; i++) {
-        const ep = group[i];
-        portCenters.set(ep.portId, { x: xs[i], y: cy, side });
+        const ep = group[i]!;
+        portCenters.set(ep.portId, { x: xs[i]!, y: cy, side });
         portMeta.set(ep.portId, {
           laneOffset: i - spineIndex,
           laneCount: group.length,
@@ -339,7 +476,7 @@ export async function buildSqlLayout(
 
   const elkNodes = tables.map((t) => {
     const d = degree.get(t.name) ?? 0;
-    const margin = d >= 10 ? 52 : d >= 6 ? 40 : 30;
+    const margin = d >= 10 ? 50 : d >= 6 ? 40 : 30;
 
     const ports = endpoints
       .filter((ep) => ep.tableName === t.name)
@@ -394,35 +531,26 @@ export async function buildSqlLayout(
       "elk.direction": elkDirection,
       "elk.edgeRouting": "ORTHOGONAL",
       "elk.layered.unnecessaryBendpoints": "true",
-
       "elk.orthogonalRouting.minimumSegmentLength": preferHorizontal
         ? "40"
-        : "52",
-
+        : "56",
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
-
-      "elk.spacing.nodeNode": "48",
+      "elk.spacing.nodeNode": "52",
       "elk.layered.spacing.nodeNodeBetweenLayers": preferHorizontal
-        ? "126"
-        : "148",
-
-      "elk.spacing.edgeEdge": enableFanOut ? "34" : "26",
-      "elk.spacing.edgeNode": enableFanOut ? "46" : "40",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": enableFanOut ? "38" : "30",
-
+        ? "136"
+        : "166",
+      "elk.spacing.edgeEdge": "28",
+      "elk.spacing.edgeNode": "44",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "32",
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
       "elk.layered.cycleBreaking.strategy": "GREEDY",
-
       "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
       "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
       "elk.layered.nodePlacement.favorStraightEdges": "true",
-
       "elk.layered.compaction.postCompaction.strategy": "EDGE_LENGTH",
-
       "elk.layered.wrapping.strategy": "SINGLE_EDGE",
       "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
-
       "elk.layered.mergeEdges": "false",
     },
   };
@@ -439,10 +567,20 @@ export async function buildSqlLayout(
     };
   }
 
-  const routed: RoutedEdge[] = (out.edges ?? [])
+  const rects: Rect[] = Object.values(layout).map((b) => ({
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
+  }));
+  const obstacles = rects.map((r) => inflateRect(r, 12));
+
+  const rawEdgesWithIndex: Array<RoutedEdge & { relIndex: number }> = (
+    out.edges ?? []
+  )
     .map((e: any) => {
-      const idx = Number(String(e.id).split(":")[1]);
-      const relation = relations[idx];
+      const relIndex = Number(String(e.id).split(":")[1]);
+      const relation = relations[relIndex];
       if (!relation) return null;
 
       let pts = pointsFromElkEdge(e);
@@ -451,53 +589,103 @@ export async function buildSqlLayout(
       pts = pts.slice().reverse();
       pts = simplifyOrthogonal(pts);
 
-      const BASE_LEAD = preferHorizontal ? 34 : 44;
-      const STEP_LEAD = preferHorizontal ? 10 : 16;
-      const MAX_LEAD = preferHorizontal ? 120 : 170;
+      const BASE_LEAD = 34;
+      const STEP_LEAD = 12;
+      const MAX_LEAD = 170;
 
-      const sm = portMeta.get(`port:child:${idx}`);
-      const em = portMeta.get(`port:parent:${idx}`);
+      const sm = portMeta.get(`port:child:${relIndex}`);
+      const em = portMeta.get(`port:parent:${relIndex}`);
 
       if (sm) {
-        const order = laneOrderFromOffset(sm.laneOffset);
-        const desiredLead = clamp(
-          BASE_LEAD + order * STEP_LEAD,
+        const desired = clamp(
+          BASE_LEAD + Math.abs(sm.laneOffset) * STEP_LEAD,
           BASE_LEAD,
           MAX_LEAD,
         );
-        pts = extendLeadWithoutExtraBends(pts, "start", desiredLead);
+        pts = extendLeadWithoutExtraBends(pts, sm.side, "start", desired);
       }
-
       if (em) {
-        const order = laneOrderFromOffset(em.laneOffset);
-        const desiredLead = clamp(
-          BASE_LEAD + order * STEP_LEAD,
+        const desired = clamp(
+          BASE_LEAD + Math.abs(em.laneOffset) * STEP_LEAD,
           BASE_LEAD,
           MAX_LEAD,
         );
-        pts = extendLeadWithoutExtraBends(pts, "end", desiredLead);
+        pts = extendLeadWithoutExtraBends(pts, em.side, "end", desired);
       }
 
-      pts = fanOutEndpoint(
-        pts,
-        "start",
-        sm ? { laneOffset: sm.laneOffset, side: sm.side } : undefined,
-        enableFanOut,
-      );
-      pts = fanOutEndpoint(
-        pts,
-        "end",
-        em ? { laneOffset: em.laneOffset, side: em.side } : undefined,
-        enableFanOut,
-      );
-
-      pts = ensureMinEndpointLegs(pts, preferHorizontal ? 40 : 48);
+      pts = ensureMinEndpointLegs(pts, preferHorizontal ? 40 : 54);
       pts = simplifyOrthogonal(pts);
 
-      return { id: e.id, relation, points: pts } satisfies RoutedEdge;
+      return { id: e.id, relation, points: pts, relIndex };
     })
     .filter(Boolean);
 
-  const size = normalizeWithPadding(layout, routed);
-  return { layout, edges: routed, size };
+  const segCounts = new Map<string, number>();
+  if (options.direction === "horizontal") {
+    for (const ed of rawEdgesWithIndex) {
+      for (const k of longHorizontalSegmentKeys(ed.points)) {
+        segCounts.set(k, (segCounts.get(k) ?? 0) + 1);
+      }
+    }
+  }
+
+  // Lane offsets per target+side, sorted by target port Y to avoid crossings near the target
+  const laneOffsetByRelIndex = new Map<number, number>();
+  if (options.direction === "horizontal") {
+    const groups = new Map<string, number[]>();
+    for (const ed of rawEdgesWithIndex) {
+      const relIndex = ed.relIndex;
+      const to = ed.relation.toTable;
+      const endPort = portMeta.get(`port:parent:${relIndex}`);
+      const side = endPort?.side ?? "EAST";
+      const key = `${to}|${side}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(relIndex);
+    }
+
+    for (const [, list] of groups.entries()) {
+      list.sort((a, b) => {
+        const ya = portCenters.get(`port:parent:${a}`)?.y ?? 0;
+        const yb = portCenters.get(`port:parent:${b}`)?.y ?? 0;
+        return ya - yb || a - b;
+      });
+      const mid = Math.floor((list.length - 1) / 2);
+      for (let i = 0; i < list.length; i++)
+        laneOffsetByRelIndex.set(list[i]!, i - mid);
+    }
+  }
+
+  let routedEdges: RoutedEdge[] = rawEdgesWithIndex.map((e) => ({
+    id: e.id,
+    relation: e.relation,
+    points: e.points,
+  }));
+
+  if (options.direction === "horizontal") {
+    routedEdges = rawEdgesWithIndex.map((ed) => {
+      const back = backtracksX(ed.points);
+      const overlap = longHorizontalSegmentKeys(ed.points).some(
+        (k) => (segCounts.get(k) ?? 0) > 1,
+      );
+
+      if (!back && !overlap)
+        return { id: ed.id, relation: ed.relation, points: ed.points };
+
+      const laneOffset = laneOffsetByRelIndex.get(ed.relIndex) ?? 0;
+      const allowLonger = overlap ? 1.55 : 1.28;
+
+      const cand = bestHorizontalReroute(
+        ed.points,
+        laneOffset,
+        obstacles,
+        true,
+        allowLonger,
+      );
+
+      return { id: ed.id, relation: ed.relation, points: cand ?? ed.points };
+    });
+  }
+
+  const size = normalizeWithPadding(layout, routedEdges);
+  return { layout, edges: routedEdges, size };
 }

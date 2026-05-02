@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import type {
   Cardinality,
   DiagramFormat,
+  LayoutDirection,
   Relation,
   RoutedEdge,
   Table,
@@ -12,6 +13,7 @@ import { getColumnY } from "../utils/schemaParser";
 
 type RelationLayerProps = {
   mode: DiagramFormat;
+  direction?: LayoutDirection;
   tables: Table[];
   layout: Record<string, Layout>;
   relations: Relation[];
@@ -147,6 +149,7 @@ function buildFallbackRoutes(
 
 export default function RelationLayer({
   mode,
+  direction,
   tables,
   layout,
   relations,
@@ -391,7 +394,7 @@ export default function RelationLayer({
         const d =
           mode === "erd"
             ? roundedOrthogonalD(r.points, 16)
-            : roundedOrthogonalD(r.points, 12);
+            : roundedOrthogonalD(r.points, 10);
 
         const labelPoint = rel.label ? midPointAlongPolyline(r.points) : null;
 

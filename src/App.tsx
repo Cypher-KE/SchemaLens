@@ -332,11 +332,20 @@ export default function App() {
     const el = mainRef.current;
     if (!el) return;
 
+    const lastStepAt = { t: 0 };
+
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+
       const dy = normalizeWheelDeltaY(e);
       const dir: -1 | 1 = dy > 0 ? -1 : 1;
-      zoomStepAtClient(dir, e.clientX, e.clientY); // 1 step per event
+
+      const now = performance.now();
+      const cooldown = e.deltaMode === 0 ? 18 : 90; // trackpad vs mouse wheel
+      if (now - lastStepAt.t < cooldown && !e.shiftKey) return;
+
+      lastStepAt.t = now;
+      zoomStepAtClient(dir, e.clientX, e.clientY);
     };
 
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -391,7 +400,6 @@ export default function App() {
 
   const onPointerDown = (e: React.PointerEvent) => {
     const forcePan = e.button === 1 || e.button === 2 || spaceDownRef.current;
-
     if (forcePan) e.preventDefault();
 
     try {
@@ -525,6 +533,7 @@ export default function App() {
             >
               <RelationLayer
                 mode={mode}
+                direction={directionForLayout}
                 tables={filteredTables}
                 layout={layout}
                 relations={filteredRelations}

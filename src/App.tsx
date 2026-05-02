@@ -44,7 +44,6 @@ const ZOOM_LEVELS = (() => {
 
 function nextZoomLevel(current: number, dir: -1 | 1) {
   const eps = 1e-6;
-
   if (dir > 0) {
     for (const z of ZOOM_LEVELS) if (z > current + eps) return z;
     return ZOOM_LEVELS[ZOOM_LEVELS.length - 1]!;
@@ -55,6 +54,12 @@ function nextZoomLevel(current: number, dir: -1 | 1) {
     }
     return ZOOM_LEVELS[0]!;
   }
+}
+
+function normalizeWheelDeltaY(e: WheelEvent) {
+  if (e.deltaMode === 1) return e.deltaY * 16;
+  if (e.deltaMode === 2) return e.deltaY * 120;
+  return e.deltaY;
 }
 
 export default function App() {
@@ -235,7 +240,6 @@ export default function App() {
     setActiveTable(null);
   };
 
-  // playground state
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
 
@@ -324,27 +328,15 @@ export default function App() {
     [zoomStepAtClient],
   );
 
-  const wheelAccRef = useRef(0);
-
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
 
-    const THRESH = 60;
-
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-
-      wheelAccRef.current += e.deltaY;
-
-      while (wheelAccRef.current >= THRESH) {
-        zoomStepAtClient(-1, e.clientX, e.clientY);
-        wheelAccRef.current -= THRESH;
-      }
-      while (wheelAccRef.current <= -THRESH) {
-        zoomStepAtClient(1, e.clientX, e.clientY);
-        wheelAccRef.current += THRESH;
-      }
+      const dy = normalizeWheelDeltaY(e);
+      const dir: -1 | 1 = dy > 0 ? -1 : 1;
+      zoomStepAtClient(dir, e.clientX, e.clientY); // 1 step per event
     };
 
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -373,7 +365,6 @@ export default function App() {
     };
   }, []);
 
-  // pan with click passthrough
   const [isPanning, setIsPanning] = useState(false);
 
   const dragRef = useRef<{

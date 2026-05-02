@@ -30,10 +30,12 @@ const PORT_SIZE = 2;
 function chooseChildSideSql(
   child: { x: number; y: number },
   parent: { x: number; y: number },
+  preferHorizontal: boolean,
 ): Side {
   const dx = parent.x - child.x;
   const dy = parent.y - child.y;
-  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "EAST" : "WEST";
+
+  if (preferHorizontal) return dx >= 0 ? "EAST" : "WEST";
   return dy >= 0 ? "SOUTH" : "NORTH";
 }
 
@@ -62,6 +64,77 @@ function laneOrderFromOffset(laneOffset: number) {
   return Math.abs(laneOffset);
 }
 
+function fanOutEndpoint(
+  points: { x: number; y: number }[],
+  which: "start" | "end",
+  meta: { laneOffset: number; side: Side } | undefined,
+  enabled: boolean,
+) {
+  if (!enabled || !meta) return points;
+
+  const off = clamp(meta.laneOffset, -4, 4);
+  if (off === 0) return points;
+
+  const step = 14;
+  const delta = off * step;
+
+  const pts = points.map((p) => ({ ...p }));
+  if (pts.length < 2) return pts;
+
+  if (which === "start") {
+    const p0 = pts[0];
+    const p1 = pts[1];
+
+    if (p0.x === p1.x && (meta.side === "NORTH" || meta.side === "SOUTH")) {
+      const x = p0.x + delta;
+      return simplifyOrthogonal([
+        p0,
+        { x, y: p0.y },
+        { x, y: p1.y },
+        ...pts.slice(1),
+      ]);
+    }
+
+    if (p0.y === p1.y && (meta.side === "EAST" || meta.side === "WEST")) {
+      const y = p0.y + delta;
+      return simplifyOrthogonal([
+        p0,
+        { x: p0.x, y },
+        { x: p1.x, y },
+        ...pts.slice(1),
+      ]);
+    }
+
+    return pts;
+  }
+
+  const n = pts.length;
+  const p0 = pts[n - 2];
+  const p1 = pts[n - 1];
+
+  if (p0.x === p1.x && (meta.side === "NORTH" || meta.side === "SOUTH")) {
+    const x = p1.x + delta;
+    return simplifyOrthogonal([
+      ...pts.slice(0, n - 1),
+      { x, y: p0.y },
+      { x, y: p1.y },
+      p1,
+    ]);
+  }
+
+  if (p0.y === p1.y && (meta.side === "EAST" || meta.side === "WEST")) {
+    const y = p1.y + delta;
+    return simplifyOrthogonal([
+      ...pts.slice(0, n - 1),
+      { x: p0.x, y },
+      { x: p1.x, y },
+      p1,
+    ]);
+  }
+
+  return pts;
+}
+
 export async function buildSqlLayout(
   elk: ELK,
   tables: Table[],
@@ -79,6 +152,8 @@ export async function buildSqlLayout(
   >();
 
   const elkDirection = options.direction === "vertical" ? "DOWN" : "RIGHT";
+  const preferHorizontal = elkDirection === "RIGHT";
+  const enableFanOut = !preferHorizontal;
 
   const targetWrapWidth = Math.max(
     560,
@@ -109,8 +184,10 @@ export async function buildSqlLayout(
       "elk.edgeRouting": "POLYLINE",
       "elk.layered.unnecessaryBendpoints": "true",
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
-      "elk.spacing.nodeNode": "44",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "132",
+      "elk.spacing.nodeNode": "48",
+      "elk.layered.spacing.nodeNodeBetweenLayers": preferHorizontal
+        ? "120"
+        : "140",
       "elk.layered.wrapping.strategy": "SINGLE_EDGE",
       "elk.layered.wrapping.targetWidth": String(targetWrapWidth),
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
@@ -163,7 +240,11 @@ export async function buildSqlLayout(
       y: parentB.y + parentB.h / 2,
     };
 
-    const childSide = chooseChildSideSql(childCenter, parentCenter);
+    const childSide = chooseChildSideSql(
+      childCenter,
+      parentCenter,
+      preferHorizontal,
+    );
     const parentSide = oppositeSide(childSide);
 
     endpoints.push({
@@ -212,7 +293,7 @@ export async function buildSqlLayout(
 
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxY - minY);
-      const minGap = clamp(Math.round(span / (group.length + 1)), 14, 24);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 16, 26);
 
       const ys = nudgeToMinGap(bases, minY, maxY, minGap);
       const cx = side === "EAST" ? TABLE_WIDTH : 0;
@@ -232,7 +313,7 @@ export async function buildSqlLayout(
 
       const bases = group.map((g) => g.baseAlong);
       const span = Math.max(0, maxX - minX);
-      const minGap = clamp(Math.round(span / (group.length + 1)), 16, 30);
+      const minGap = clamp(Math.round(span / (group.length + 1)), 18, 34);
 
       const xs = nudgeToMinGap(bases, minX, maxX, minGap);
       const cy = side === "SOUTH" ? h : 0;
@@ -258,7 +339,7 @@ export async function buildSqlLayout(
 
   const elkNodes = tables.map((t) => {
     const d = degree.get(t.name) ?? 0;
-    const margin = d >= 10 ? 48 : d >= 6 ? 38 : 28;
+    const margin = d >= 10 ? 52 : d >= 6 ? 40 : 30;
 
     const ports = endpoints
       .filter((ep) => ep.tableName === t.name)
@@ -313,15 +394,21 @@ export async function buildSqlLayout(
       "elk.direction": elkDirection,
       "elk.edgeRouting": "ORTHOGONAL",
       "elk.layered.unnecessaryBendpoints": "true",
-      "elk.orthogonalRouting.minimumSegmentLength": "44",
+
+      "elk.orthogonalRouting.minimumSegmentLength": preferHorizontal
+        ? "40"
+        : "52",
+
       "elk.padding": `[top=${LAYOUT_PADDING},left=${LAYOUT_PADDING},bottom=${LAYOUT_PADDING},right=${LAYOUT_PADDING}]`,
 
-      "elk.spacing.nodeNode": "44",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "138",
+      "elk.spacing.nodeNode": "48",
+      "elk.layered.spacing.nodeNodeBetweenLayers": preferHorizontal
+        ? "126"
+        : "148",
 
-      "elk.spacing.edgeEdge": "24",
-      "elk.spacing.edgeNode": "38",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": "28",
+      "elk.spacing.edgeEdge": enableFanOut ? "34" : "26",
+      "elk.spacing.edgeNode": enableFanOut ? "46" : "40",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": enableFanOut ? "38" : "30",
 
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
@@ -364,9 +451,9 @@ export async function buildSqlLayout(
       pts = pts.slice().reverse();
       pts = simplifyOrthogonal(pts);
 
-      const BASE_LEAD = 44;
-      const STEP_LEAD = 16;
-      const MAX_LEAD = 160;
+      const BASE_LEAD = preferHorizontal ? 34 : 44;
+      const STEP_LEAD = preferHorizontal ? 10 : 16;
+      const MAX_LEAD = preferHorizontal ? 120 : 170;
 
       const sm = portMeta.get(`port:child:${idx}`);
       const em = portMeta.get(`port:parent:${idx}`);
@@ -391,7 +478,20 @@ export async function buildSqlLayout(
         pts = extendLeadWithoutExtraBends(pts, "end", desiredLead);
       }
 
-      pts = ensureMinEndpointLegs(pts, 46);
+      pts = fanOutEndpoint(
+        pts,
+        "start",
+        sm ? { laneOffset: sm.laneOffset, side: sm.side } : undefined,
+        enableFanOut,
+      );
+      pts = fanOutEndpoint(
+        pts,
+        "end",
+        em ? { laneOffset: em.laneOffset, side: em.side } : undefined,
+        enableFanOut,
+      );
+
+      pts = ensureMinEndpointLegs(pts, preferHorizontal ? 40 : 48);
       pts = simplifyOrthogonal(pts);
 
       return { id: e.id, relation, points: pts } satisfies RoutedEdge;

@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import type { DiagramFormat } from "../types";
+import type { DiagramFormat, LayoutDirection } from "../types";
 
 type SidebarProps = {
   schemaText: string;
@@ -7,6 +7,9 @@ type SidebarProps = {
 
   format: DiagramFormat;
   setFormat: (val: DiagramFormat) => void;
+
+  direction: LayoutDirection;
+  setDirection: (val: LayoutDirection) => void;
 
   search: string;
   setSearch: (val: string) => void;
@@ -28,6 +31,8 @@ export default function Sidebar({
   setSchemaText,
   format,
   setFormat,
+  direction,
+  setDirection,
   search,
   setSearch,
   activeTable,
@@ -116,6 +121,53 @@ export default function Sidebar({
             </div>
           </div>
 
+          <div className="flex items-center justify-between gap-3">
+            <span
+              className="text-sm font-medium"
+              style={{ color: "hsl(var(--fg))" }}
+            >
+              Direction
+            </span>
+
+            <div
+              className="inline-flex overflow-hidden rounded-lg border"
+              style={{ borderColor: panelBorder }}
+            >
+              <button
+                onClick={() => setDirection("horizontal")}
+                className="px-3 py-1.5 text-xs font-semibold"
+                style={{
+                  background:
+                    direction === "horizontal"
+                      ? "hsl(var(--fg) / 0.9)"
+                      : "hsl(var(--bg) / 0.35)",
+                  color:
+                    direction === "horizontal"
+                      ? "hsl(var(--bg))"
+                      : "hsl(var(--fg))",
+                }}
+              >
+                Horizontal
+              </button>
+              <button
+                onClick={() => setDirection("vertical")}
+                className="px-3 py-1.5 text-xs font-semibold"
+                style={{
+                  background:
+                    direction === "vertical"
+                      ? "hsl(var(--fg) / 0.9)"
+                      : "hsl(var(--bg) / 0.35)",
+                  color:
+                    direction === "vertical"
+                      ? "hsl(var(--bg))"
+                      : "hsl(var(--fg))",
+                }}
+              >
+                Vertical
+              </button>
+            </div>
+          </div>
+
           <textarea
             id="schemaInput"
             value={schemaText}
@@ -188,6 +240,7 @@ export default function Sidebar({
           <p className="text-sm font-medium" style={{ color: muted }}>
             {parsedSummary}
           </p>
+
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -199,6 +252,7 @@ export default function Sidebar({
               color: "hsl(var(--fg))",
             }}
           />
+
           {activeTable && (
             <button
               className="text-xs underline-offset-2 hover:underline"
@@ -208,6 +262,11 @@ export default function Sidebar({
               Clear active highlight
             </button>
           )}
+        </div>
+
+        <div className="text-xs" style={{ color: muted }}>
+          Tip: wheel to zoom at cursor • Space + drag to pan • double-click to
+          reset
         </div>
       </motion.div>
     </aside>

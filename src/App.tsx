@@ -30,9 +30,11 @@ import { parseErdDiagram, SAMPLE_ERD } from "./utils/erdParser";
 import Sidebar from "./components/Sidebar";
 import RelationLayer from "./components/RelationLayer";
 import TableCard from "./components/TableCard";
+import CanvasControls from "./components/CanvasControls";
 
 const clamp = (n: number, min: number, max: number) =>
   Math.max(min, Math.min(max, n));
+const DRAG_THRESHOLD = 4;
 
 export default function App() {
   const [format, setFormat] = useState<DiagramFormat>("sql");
@@ -212,7 +214,7 @@ export default function App() {
     setActiveTable(null);
   };
 
-  // playground (pan/zoom)
+  // playground state
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
 
@@ -220,27 +222,6 @@ export default function App() {
   const panRef = useRef(pan);
   useEffect(() => void (zoomRef.current = zoom), [zoom]);
   useEffect(() => void (panRef.current = pan), [pan]);
-
-  const [spaceDown, setSpaceDown] = useState(false);
-  const spaceDownRef = useRef(false);
-  useEffect(() => {
-    const onDown = (e: KeyboardEvent) => {
-      if (e.code !== "Space") return;
-      spaceDownRef.current = true;
-      setSpaceDown(true);
-    };
-    const onUp = (e: KeyboardEvent) => {
-      if (e.code !== "Space") return;
-      spaceDownRef.current = false;
-      setSpaceDown(false);
-    };
-    window.addEventListener("keydown", onDown);
-    window.addEventListener("keyup", onUp);
-    return () => {
-      window.removeEventListener("keydown", onDown);
-      window.removeEventListener("keyup", onUp);
-    };
-  }, []);
 
   const setZoomSafe = useCallback((next: number) => {
     zoomRef.current = next;
@@ -286,19 +267,27 @@ export default function App() {
       const s = zoomRef.current;
       const p = panRef.current;
 
-      const nextZoom = clamp(s * factor, 0.2, 3.2);
+      const nextZoom = clamp(s * factor, 0.05, 8); // more zoom-out + zoom-in headroom
+
       const wx = (mx - p.x) / s;
       const wy = (my - p.y) / s;
 
-      const nextPan = {
-        x: mx - wx * nextZoom,
-        y: my - wy * nextZoom,
-      };
+      const nextPan = { x: mx - wx * nextZoom, y: my - wy * nextZoom };
 
       setZoomSafe(nextZoom);
       setPanSafe(nextPan);
     },
     [setPanSafe, setZoomSafe],
+  );
+
+  const zoomAtCenter = useCallback(
+    (factor: number) => {
+      const el = mainRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      zoomAtClient(r.left + r.width / 2, r.top + r.height / 2, factor);
+    },
+    [zoomAtClient],
   );
 
   useEffect(() => {
@@ -316,47 +305,118 @@ export default function App() {
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoomAtClient]);
 
-  const isPanningRef = useRef(false);
-  const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const [spaceDown, setSpaceDown] = useState(false);
+  const spaceDownRef = useRef(false);
+
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      spaceDownRef.current = true;
+      setSpaceDown(true);
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      spaceDownRef.current = false;
+      setSpaceDown(false);
+    };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+    };
+  }, []);
+
+  // pan with click passthrough
+  const [isPanning, setIsPanning] = useState(false);
+
+  const dragRef = useRef<{
+    active: boolean;
+    started: boolean;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    panX: number;
+    panY: number;
+    forcePan: boolean;
+  }>({
+    active: false,
+    started: false,
+    pointerId: -1,
+    startX: 0,
+    startY: 0,
+    panX: 0,
+    panY: 0,
+    forcePan: false,
+  });
+
+  const suppressClickRef = useRef(false);
 
   const onPointerDown = (e: React.PointerEvent) => {
-    const wantPan = e.button === 1 || e.button === 2 || spaceDownRef.current;
-    if (!wantPan) return;
+    const forcePan = e.button === 1 || e.button === 2 || spaceDownRef.current;
 
-    e.preventDefault();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    if (forcePan) {
+      e.preventDefault();
+    }
 
-    isPanningRef.current = true;
-    panStartRef.current = {
-      x: e.clientX,
-      y: e.clientY,
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+
+    dragRef.current = {
+      active: true,
+      started: false,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
       panX: panRef.current.x,
       panY: panRef.current.y,
+      forcePan,
     };
+
+    if (forcePan) {
+      dragRef.current.started = true;
+      setIsPanning(true);
+    }
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
-    if (!isPanningRef.current) return;
+    const d = dragRef.current;
+    if (!d.active || d.pointerId !== e.pointerId) return;
+
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+
+    if (!d.started) {
+      if (!d.forcePan && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      d.started = true;
+      setIsPanning(true);
+    }
+
     e.preventDefault();
-
-    const dx = e.clientX - panStartRef.current.x;
-    const dy = e.clientY - panStartRef.current.y;
-
-    setPanSafe({
-      x: panStartRef.current.panX + dx,
-      y: panStartRef.current.panY + dy,
-    });
+    setPanSafe({ x: d.panX + dx, y: d.panY + dy });
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
-    if (!isPanningRef.current) return;
-    e.preventDefault();
-    isPanningRef.current = false;
+    const d = dragRef.current;
+    if (!d.active || d.pointerId !== e.pointerId) return;
+
+    if (d.started) suppressClickRef.current = true;
+
+    dragRef.current.active = false;
+    setIsPanning(false);
+
     try {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {
       // ignore
     }
+
+    window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 0);
   };
 
   const directionForSidebar = format === "erd" ? erdDirection : sqlDirection;
@@ -391,98 +451,36 @@ export default function App() {
 
         <main
           ref={mainRef}
-          className="canvas-bg relative flex-1 overflow-hidden p-4 lg:p-6"
-          style={{ touchAction: "none" }}
+          className="canvas-bg relative flex-1 overflow-hidden p-4 lg:p-6 select-none"
+          style={{
+            touchAction: "none",
+            userSelect: "none",
+            cursor: isPanning ? "grabbing" : spaceDown ? "grab" : "default",
+          }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
-          onContextMenu={(e) => {
-            if (spaceDown) e.preventDefault();
-          }}
+          onContextMenu={(e) => e.preventDefault()}
           onDoubleClick={resetView}
+          onClickCapture={(e) => {
+            if (!suppressClickRef.current) return;
+            e.preventDefault();
+            e.stopPropagation();
+          }}
         >
-          <div
-            className="pointer-events-auto absolute right-4 top-4 z-10 inline-flex items-center gap-2 rounded-lg border px-2 py-2"
-            style={{
-              borderColor: "hsl(var(--border) / 0.7)",
-              background: "hsl(var(--card) / 0.55)",
-              backdropFilter: "blur(10px)",
-            }}
-          >
-            <button
-              className="rounded-md border px-2 py-1 text-xs font-semibold"
-              style={{
-                borderColor: "hsl(var(--border) / 0.7)",
-                color: "hsl(var(--fg))",
-                background: "hsl(var(--bg) / 0.25)",
-              }}
-              onClick={() => {
-                const el = mainRef.current;
-                if (!el) return;
-                const rect = el.getBoundingClientRect();
-                zoomAtClient(
-                  rect.left + rect.width / 2,
-                  rect.top + rect.height / 2,
-                  1 / 1.12,
-                );
-              }}
-            >
-              −
-            </button>
-
-            <div
-              className="min-w-[64px] text-center text-xs"
-              style={{ color: "hsl(var(--muted-fg))" }}
-            >
-              {Math.round(zoom * 100)}%
-            </div>
-
-            <button
-              className="rounded-md border px-2 py-1 text-xs font-semibold"
-              style={{
-                borderColor: "hsl(var(--border) / 0.7)",
-                color: "hsl(var(--fg))",
-                background: "hsl(var(--bg) / 0.25)",
-              }}
-              onClick={() => {
-                const el = mainRef.current;
-                if (!el) return;
-                const rect = el.getBoundingClientRect();
-                zoomAtClient(
-                  rect.left + rect.width / 2,
-                  rect.top + rect.height / 2,
-                  1.12,
-                );
-              }}
-            >
-              +
-            </button>
-
-            <button
-              className="ml-1 rounded-md border px-2 py-1 text-xs font-semibold"
-              style={{
-                borderColor: "hsl(var(--border) / 0.7)",
-                color: "hsl(var(--fg))",
-                background: "hsl(var(--bg) / 0.25)",
-              }}
-              onClick={resetView}
-              title="Reset view (double-click canvas)"
-            >
-              Reset
-            </button>
-          </div>
+          <CanvasControls
+            zoom={zoom}
+            onZoomIn={() => zoomAtCenter(1.12)}
+            onZoomOut={() => zoomAtCenter(1 / 1.12)}
+            onReset={resetView}
+          />
 
           <div
             className="absolute left-0 top-0"
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: "0 0",
-              cursor: spaceDown
-                ? isPanningRef.current
-                  ? "grabbing"
-                  : "grab"
-                : "default",
             }}
           >
             <div

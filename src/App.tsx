@@ -2,13 +2,7 @@ import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "react";
 import { AnimatePresence } from "framer-motion";
 import { toPng } from "html-to-image";
 import { jsPDF } from "jspdf";
-import type {
-  DiagramFormat,
-  ErdLayoutMode,
-  Layout,
-  ParseResult,
-  RoutedEdge,
-} from "./types";
+import type { DiagramFormat, Layout, ParseResult, RoutedEdge } from "./types";
 import {
   parseSchema,
   buildLayout,
@@ -26,7 +20,6 @@ import TableCard from "./components/TableCard";
 
 export default function App() {
   const [format, setFormat] = useState<DiagramFormat>("sql");
-  const [erdLayout, setErdLayout] = useState<ErdLayoutMode>("hierarchical");
 
   const [schemaText, setSchemaText] = useState(SAMPLE_SCHEMA);
   const [search, setSearch] = useState("");
@@ -57,7 +50,7 @@ export default function App() {
     const raw = getComputedStyle(document.documentElement)
       .getPropertyValue("--export-bg")
       .trim();
-    return raw ? `hsl(${raw})` : "#0b1220";
+    return raw ? `hsl(${raw})` : "#272822";
   };
 
   const exportAsImage = async () => {
@@ -128,7 +121,6 @@ export default function App() {
           {
             availableWidth: mainWidth - 64,
             mode,
-            erdLayout,
           },
         );
 
@@ -168,12 +160,9 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [filteredTables, filteredRelations, mainWidth, mode, erdLayout]);
+  }, [filteredTables, filteredRelations, mainWidth, mode]);
 
-  const parsedSummary =
-    mode === "erd"
-      ? `${result.tables.length} tables • ${result.relations.length} relations • erd • ${erdLayout}`
-      : `${result.tables.length} tables • ${result.relations.length} relations • sql`;
+  const parsedSummary = `${result.tables.length} tables • ${result.relations.length} relations • ${mode}`;
 
   const visualize = () => {
     const trimmed = schemaText.trim();
@@ -189,6 +178,18 @@ export default function App() {
     if (!autoIsErd && format !== "sql") setFormat("sql");
   };
 
+  const loadSample = () => {
+    if (format === "erd") {
+      setSchemaText(SAMPLE_ERD);
+      setResult(parseErdDiagram(SAMPLE_ERD));
+    } else {
+      setSchemaText(SAMPLE_SCHEMA);
+      setResult(parseSchema(SAMPLE_SCHEMA));
+    }
+    setSearch("");
+    setActiveTable(null);
+  };
+
   return (
     <div
       className="min-h-screen"
@@ -200,28 +201,13 @@ export default function App() {
           setSchemaText={setSchemaText}
           format={format}
           setFormat={setFormat}
-          erdLayout={erdLayout}
-          setErdLayout={setErdLayout}
           search={search}
           setSearch={setSearch}
           activeTable={activeTable}
           setActiveTable={setActiveTable}
           parsedSummary={parsedSummary}
           onVisualize={visualize}
-          onLoadSampleSql={() => {
-            setFormat("sql");
-            setSchemaText(SAMPLE_SCHEMA);
-            setResult(parseSchema(SAMPLE_SCHEMA));
-            setSearch("");
-            setActiveTable(null);
-          }}
-          onLoadSampleErd={() => {
-            setFormat("erd");
-            setSchemaText(SAMPLE_ERD);
-            setResult(parseErdDiagram(SAMPLE_ERD));
-            setSearch("");
-            setActiveTable(null);
-          }}
+          onLoadSample={loadSample}
           onExportImage={exportAsImage}
           onExportPDF={exportAsPDF}
         />

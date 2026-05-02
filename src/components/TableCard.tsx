@@ -92,7 +92,7 @@ export default function TableCard({
 
                 <span className="truncate font-medium">{c.name}</span>
 
-                <span className="text-[10px] font-semibold">
+                <span className="text-[11px] font-semibold">
                   {key ? (
                     <span
                       className="inline-flex rounded px-1.5 py-0.5"
@@ -138,7 +138,7 @@ export default function TableCard({
               <span className="flex items-center gap-2 font-medium">
                 {column.isPrimaryKey && (
                   <span
-                    className="inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                    className="inline-flex rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase"
                     style={{
                       background: "hsl(var(--warning) / 0.16)",
                       color: "hsl(var(--warning))",
@@ -149,7 +149,7 @@ export default function TableCard({
                 )}
                 {column.isForeignKey && (
                   <span
-                    className="inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                    className="inline-flex rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase"
                     style={{
                       background: "hsl(var(--accent) / 0.14)",
                       color: "hsl(var(--accent))",

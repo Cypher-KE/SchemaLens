@@ -2,49 +2,25 @@
 
 @layer base {
   :root {
-    /* core */
-    --bg: 0 0% 100%;
-    --fg: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96%;
-    --muted-fg: 215.4 16.3% 46.9%;
-    --card: 0 0% 100%;
-    --card-fg: 222.2 47.4% 11.2%;
-    --border: 214.3 31.8% 91.4%;
+    --bg: 70 8% 12%;
+    --fg: 60 30% 96%;
 
-    /* accent + misc */
-    --accent: 199 89% 48%;
-    --accent-2: 213 94% 68%;
-    --warning: 38 92% 50%;
+    --muted: 60 6% 20%;
+    --muted-fg: 52 18% 72%;
 
-    /* canvas */
-    --canvas-1: 210 40% 98%;
-    --canvas-2: 210 40% 96%;
-    --canvas-3: 210 30% 92%;
+    --card: 60 6% 16%;
+    --card-fg: 60 30% 96%;
+    --border: 60 6% 26%;
 
-    /* used for PNG/PDF exports (solid) */
-    --export-bg: 210 40% 98%;
-  }
+    --accent: 80 76% 55%;
+    --accent-2: 190 78% 58%;
+    --warning: 32 98% 56%;
 
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: 222.2 84% 4.9%;
-      --fg: 210 40% 98%;
-      --muted: 222.2 47% 11%;
-      --muted-fg: 215 20.2% 65.1%;
-      --card: 222.2 47% 9%;
-      --card-fg: 210 40% 98%;
-      --border: 215.3 19.3% 23%;
+    --canvas-1: 60 6% 18%;
+    --canvas-2: 70 8% 14%;
+    --canvas-3: 70 10% 10%;
 
-      --accent: 199 89% 55%;
-      --accent-2: 213 94% 68%;
-      --warning: 38 92% 55%;
-
-      --canvas-1: 215 35% 16%;
-      --canvas-2: 222.2 47% 11%;
-      --canvas-3: 222.2 84% 4.9%;
-
-      --export-bg: 222.2 84% 4.9%;
-    }
+    --export-bg: 70 8% 12%;
   }
 
   html,
